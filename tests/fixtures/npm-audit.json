@@ -1,0 +1,22 @@
+{
+  "auditReportVersion": 2,
+  "vulnerabilities": {
+    "next": {
+      "name": "next", "severity": "critical", "isDirect": true,
+      "via": [{"source": 1112233, "name": "next", "title": "Next.js: Unauthenticated Remote Code Execution in Image Optimization API", "url": "https://github.com/advisories/GHSA-2464-fhr4-w9xw", "severity": "critical", "range": ">=16.0.0 <=16.4.0"}, "postcss"],
+      "range": "16.0.0 - 16.4.0", "nodes": ["node_modules/next"],
+      "fixAvailable": {"name": "next", "version": "16.4.6", "isSemVerMajor": false}
+    },
+    "postcss": {
+      "name": "postcss", "severity": "high", "isDirect": false,
+      "via": [{"source": 1112244, "name": "postcss", "title": "PostCSS: arbitrary file read via sourceMappingURL", "url": "https://github.com/advisories/GHSA-0000-postcss", "severity": "high", "range": "<=8.5.22"}],
+      "range": "<=8.5.22", "nodes": ["node_modules/postcss"], "fixAvailable": true
+    },
+    "vitest": {
+      "name": "vitest", "severity": "high", "isDirect": true,
+      "via": [{"source": 1112255, "name": "vitest", "title": "Vitest: path traversal via mocker redirect", "url": "https://github.com/advisories/GHSA-0000-vitest", "severity": "high", "range": ">=2.1.0"}],
+      "range": ">=2.1.0", "nodes": ["node_modules/vitest"], "fixAvailable": true
+    }
+  },
+  "metadata": {"vulnerabilities": {"info": 0, "low": 0, "moderate": 0, "high": 2, "critical": 1, "total": 3}}
+}

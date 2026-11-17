@@ -1,8 +1,33 @@
 {
-  "roots": ["~/Projects", "~/code"],
+  "roots": [
+    "~/Projects",
+    "~/code"
+  ],
   "max_depth": 3,
-  "exclude": ["*/archive/*", "*-old", "*/scratch/*"],
-  "exposed": ["my-saas-app", "marketing-site/web", "api-server"],
+  "exclude": [
+    "*/archive/*",
+    "*-old",
+    "*/scratch/*"
+  ],
+  "exposed": [
+    "my-saas-app",
+    "marketing-site/web",
+    "api-server"
+  ],
   "notify": "osascript -e \"display notification \\\"$DEP_PATROL_SUMMARY\\\" with title \\\"dep-patrol\\\"\"",
-  "out": "~/.dep-patrol/reports"
+  "out": "~/.dep-patrol/reports",
+  "include": [],
+  "urgency": {
+    "critical_always": true,
+    "high_on_exposed": true,
+    "moderate_on_exposed": false
+  },
+  "ignore": [
+    {
+      "match": "GHSA-xxxx-xxxx-xxxx",
+      "reason": "build-time only, not shipped",
+      "project": "my-saas-app"
+    }
+  ],
+  "osv_cache_days": 7
 }

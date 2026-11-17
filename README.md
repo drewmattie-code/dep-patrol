@@ -8,9 +8,18 @@ AI coding tools make it easy to ship many small apps, and every one of them carr
 
 ## What it does
 
-- **Finds projects** under the folders you name (`package-lock.json`, `pnpm-lock.yaml`, pinned Python requirements, `poetry.lock`, `uv.lock`). Other ecosystems are listed as unscanned, so the gaps are visible.
-- **Audits** with `npm audit` (production dependencies ranked apart from dev tooling), `pnpm audit`, and the free [OSV.dev](https://osv.dev) API for Python. Nothing extra to install.
-- **Ranks** live apps first, then by worst severity, and writes `report.md` and `report.json`.
+- **Finds projects** under the folders you name:
+  - lockfiles for npm, pnpm, Yarn, Bun, Cargo and Go;
+  - pinned Python requirements, `poetry.lock` and `uv.lock`.
+
+  It understands JS workspaces, so monorepo packages aren't scanned twice.
+- **Audits** with these, and needs nothing extra for npm, pnpm or Python:
+  - `npm audit`, with production dependencies ranked apart from dev tooling;
+  - `pnpm audit`;
+  - the free [OSV.dev](https://osv.dev) API for Python, cached and rate-limit friendly;
+  - `osv-scanner` for everything else, when it's installed.
+- **Ranks** live apps first, then by worst severity. You set what counts as urgent, and you can ignore a finding if you give a reason.
+- **Reports** in Markdown, JSON and SARIF (for GitHub code scanning). Each report opens with what's new, fixed or still open since the last run.
 - **Alerts** through any shell command you configure (desktop notification, Slack webhook, Telegram bot), and only when something needs action.
 - **Schedules** itself monthly with launchd on macOS or cron on Linux.
 - **Patches safely.** `SKILL.md` is the agent's playbook:
@@ -19,6 +28,8 @@ AI coding tools make it easy to ship many small apps, and every one of them carr
   - pass the full test gate;
   - record the rollback;
   - deploy and verify on production.
+
+  Helper scripts (`branch-from-deployed.sh`, `bump-and-verify.sh`, `record-rollback.sh`) turn the risky steps into commands that refuse unsafe states.
 
 It also covers the traps that cost real time, such as scheduled publishers that redeploy an old checkout, or scoped deploy tokens.
 
@@ -41,10 +52,20 @@ Or ask Claude Code: *"run the dependency patrol"*, *"does this CVE affect any of
 
 ## Requirements
 
-Python 3.9+. npm for JavaScript projects (pnpm optional). Network access to the npm registry and api.osv.dev. Only package names and versions are sent, no source code.
+Python 3.9+ (3.11+ parses lockfiles with the built-in `tomllib`; on older Pythons install `tomli`). npm for JavaScript projects (pnpm optional). Network access to the npm registry and api.osv.dev. Only package names and versions are sent, no source code.
 
 ## Scope
 
 A dependency scanner tells you a known-bad version is present. It doesn't find bugs in your own code, misconfigurations or leaked secrets. Pair it with a code review, and keep secrets out of files your app can serve.
 
 MIT licensed.
+
+## Tests
+
+```bash
+python3 -m unittest discover -s tests
+```
+
+The tests run offline: real-format lockfile fixtures, a recorded `npm audit` result, a mocked OSV API, and an end-to-end run that checks the report files and exit codes.
+
+Thanks to an early reviewer whose list of limitations shaped v2.
