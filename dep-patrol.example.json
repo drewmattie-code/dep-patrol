@@ -1,0 +1,8 @@
+{
+  "roots": ["~/Projects", "~/code"],
+  "max_depth": 3,
+  "exclude": ["*/archive/*", "*-old", "*/scratch/*"],
+  "exposed": ["my-saas-app", "marketing-site/web", "api-server"],
+  "notify": "osascript -e \"display notification \\\"$DEP_PATROL_SUMMARY\\\" with title \\\"dep-patrol\\\"\"",
+  "out": "~/.dep-patrol/reports"
+}
