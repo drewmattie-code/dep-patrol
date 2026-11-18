@@ -89,7 +89,7 @@ ILOG="$L/install.log"
 quiet() { "$@" > "$ILOG" 2>&1; }
 failed() { echo "   FAILED (see $ILOG)"; tail -15 "$ILOG"; exit 1; }
 named() { local x; for x in "${NAMES[@]}"; do [ "$x" = "$1" ] && return 0; done; return 1; }
-norm() { printf '%s' "$1" | tr 'A-Z_.' 'a-z--'; }
+norm() { local v; v=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]'); printf '%s' "${v//[_.]/-}"; }
 
 others_stop() {   # packages the cooldown refuses that were not named on the command line
   echo "STOP: the cooldown also refuses what you did not name: $*"
