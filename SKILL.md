@@ -115,6 +115,11 @@ Three clean checkouts say nothing about what customers are hitting. With a `depl
 
 When the live commit is this checkout, the report says so. When it differs, the manifests **as they were at the live commit** are read from git and scanned too. The report then shows what is still in what is live, even when this checkout is already fixed, and that counts as needing action.
 
+- When this checkout is **ahead** of live, or on another line, both count: what is live now and what is about to ship.
+- When this checkout is **behind** live (a stale branch of an app that has moved on), only what is live counts. What the old checkout still carries is noted, not counted.
+
+If nothing in production can report its commit, keep a git tag on the live commit and move it in your deploy step (`git tag -f live <commit>`), then use `{"ref": "live"}`.
+
 If the live commit cannot be found (the command failed, or the commit is not in this checkout), that is an incomplete scan: exit code 2. Run `git fetch` and scan again.
 
 ### Reading the change list

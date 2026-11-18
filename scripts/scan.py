@@ -34,7 +34,7 @@ except ImportError:  # pragma: no cover
     except ImportError:
         tomllib = None
 
-VERSION = "3.0.0"
+VERSION = "3.0.1"
 SCHEMA = 3
 SKIP_DIRS = {"node_modules", ".git", ".next", "dist", "build", "out", ".venv", "venv", "env", "__pycache__",
              ".turbo", ".open-next", ".wrangler", ".cache", "coverage", "vendor", "target", ".worktrees", "worktrees"}
@@ -1004,7 +1004,8 @@ def _snapshot(root, sha, rel, tmp):
 def check_deployed(p, spec, cfg):
     """Which commit is live for this project, and what the same scan finds in it.
     status: same (live is this checkout) | differs (scanned separately) | failed (could not tell: an incomplete scan)."""
-    dep = {"status": "failed", "commit": None, "date": None, "source": None, "detail": None, "manifests": [], "findings": []}
+    dep = {"status": "failed", "commit": None, "date": None, "source": None, "detail": None, "checkout": None,
+           "manifests": [], "findings": []}
     root = (p.get("git") or {}).get("root")
     if not root:
         dep["detail"] = "not a git repository, so the live commit cannot be compared"
@@ -1041,6 +1042,10 @@ def check_deployed(p, spec, cfg):
         dep["status"] = "same"
         return dep
     dep["status"] = "differs"
+    # behind: live already contains this checkout (a stale branch). ahead: this checkout contains live.
+    dep["checkout"] = ("behind" if run(["git", "merge-base", "--is-ancestor", "HEAD", sha], p["path"], 30)[0] == 0
+                       else "ahead" if run(["git", "merge-base", "--is-ancestor", sha, "HEAD"], p["path"], 30)[0] == 0
+                       else "diverged")
     try:
         with tempfile.TemporaryDirectory(prefix="dep-patrol-live-") as tmp:
             folder = _snapshot(root, sha, os.path.relpath(p["path"], root), tmp)
@@ -1061,6 +1066,21 @@ def _active(p):
 def _live(p):
     """Findings that count at the live commit, when it is not this checkout."""
     return [f for f in (p.get("deployed") or {}).get("findings") or [] if not f.get("ignored") and f["scope"] != "dev"]
+
+
+def _counted(p):
+    """The findings that count for a project, each advisory once. Normally this checkout plus the live commit.
+    When the checkout is behind a live commit that was scanned without failures, only what is live counts:
+    what a stale branch still carries is already gone from production."""
+    dep = p.get("deployed") or {}
+    live_ok = dep.get("status") == "differs" and not any(m["status"] == "failed" for m in dep.get("manifests") or [])
+    pool = _live(p) if live_ok and dep.get("checkout") == "behind" else _active(p) + _live(p)
+    out, seen = [], set()
+    for f in pool:
+        if (f["package"], f["id"]) not in seen:
+            seen.add((f["package"], f["id"]))
+            out.append(f)
+    return out
 
 
 def _rule_hits(rule, project, f):
@@ -1088,12 +1108,9 @@ def apply_ignores(report, rules):
 
 
 def urgent_findings(p, rules):
-    """Findings that need action, from this checkout and from the live commit (each advisory once)."""
-    out, seen = [], set()
-    for f in _active(p) + _live(p):
-        if (f["package"], f["id"]) in seen:
-            continue
-        seen.add((f["package"], f["id"]))
+    """The counted findings that need action."""
+    out = []
+    for f in _counted(p):
         s = f["severity"]
         if (s == "critical" and rules.get("critical_always", True)) or (p["exposed"] and (
                 (s in ("critical", "high") and rules.get("high_on_exposed", True))
@@ -1159,15 +1176,19 @@ def diff_reports(report, prev):
     d = {"previous": prev.get("generated"), "new": [], "fixed": [], "unverified": [], "open": 0, "gone": {}, "ignored": 0}
     matched = set()
     for old in prev["projects"]:
-        olds, p = _active(old), cur.get(old["name"])
+        olds, p = _counted(old), cur.get(old["name"])
         if p is None:
             if olds:
                 d["gone"][old["name"]] = len(olds)
             continue
+        dep = p.get("deployed") or {}
         status = {m["file"]: m["status"] for m in p["manifests"]}
+        if dep.get("status") == "failed" or any(m["status"] == "failed" for m in dep.get("manifests") or []):
+            status = dict.fromkeys([m["file"] for m in p["manifests"]] + [of.get("manifest") for of in olds], "failed")
+        counted = {id(f) for f in _counted(p)}
         for of in olds:
-            same = [f for f in p["findings"] if f["package"] == of["package"] and ids(f) & ids(of)]
-            live = [f for f in same if not f.get("ignored") and f["scope"] != "dev"]
+            same = [f for f in p["findings"] + (dep.get("findings") or []) if f["package"] == of["package"] and ids(f) & ids(of)]
+            live = [f for f in same if id(f) in counted]
             matched.update(id(f) for f in live)
             if live and not all(f.get("stale") for f in live):
                 d["open"] += 1
@@ -1178,7 +1199,7 @@ def diff_reports(report, prev):
             else:
                 d["fixed"].append((p["name"], of))
     for p in report["projects"]:
-        d["new"] += [(p["name"], f) for f in _active(p) if id(f) not in matched and not f.get("stale")]
+        d["new"] += [(p["name"], f) for f in _counted(p) if id(f) not in matched and not f.get("stale")]
     return d
 
 
@@ -1304,9 +1325,9 @@ def render(report, rules, diff=None, tools=None, legacy_previous=None):
         lines += [f"- {p['name']}: {m['file']} failed: {m['detail']}" for p, m in failed] + live_problems
         lines.append("")
     lines += ["| Project | Live | Critical | High | Moderate | Unrated | Scanned | Branch | Note |", "|---|---|---|---|---|---|---|---|---|"]
-    rows = sorted(projects, key=lambda p: (-int(p["exposed"]), -_worst(_active(p)), p["name"]))
+    rows = sorted(projects, key=lambda p: (-int(p["exposed"]), -_worst(_counted(p)), p["name"]))
     for p in rows:
-        c = _counts(_active(p))
+        c = _counts(_counted(p))
         not_ok = [f"{m['file']}: {'not scanned' if m['status'] == 'unscanned' else m['status']}" for m in p["manifests"]
                   if m["status"] in ("failed", "unscanned", "partial")]
         notes = []
@@ -1320,16 +1341,18 @@ def render(report, rules, diff=None, tools=None, legacy_previous=None):
         dep = p.get("deployed")
         if dep:
             notes.append({"same": f"live is this checkout ({dep['commit']})", "failed": "live commit unknown",
-                          "differs": f"live is {dep['commit']}, not this checkout"}[dep["status"]])
+                          "differs": f"live is {dep['commit']}, this checkout is {dep.get('checkout') or 'different'}"}[dep["status"]])
         g = p.get("git") or {}
         lines.append(f"| {p['name']} | {'yes' if p['exposed'] else ''} | {c.get('critical', '')} | {c.get('high', '')} | "
                      f"{c.get('moderate', '')} | {c.get('unknown', '')} | {'; '.join(not_ok) or 'yes'} | "
                      f"{g.get('branch', '')}{' (dirty)' if g.get('dirty') else ''} | {'; '.join(notes)} |")
     for p in rows:
-        act = _active(p)
+        dep = p.get("deployed")
+        behind = bool(dep) and dep["status"] == "differs" and dep.get("checkout") == "behind" and not any(
+            m["status"] == "failed" for m in dep["manifests"])
+        act = [] if behind else _active(p)   # a stale checkout's own findings are not counted, so not listed
         top = sorted((f for f in act if f["severity"] in ("critical", "high", "unknown")),
                      key=lambda f: (-SEV_ORDER[f["severity"]], f["package"], f["id"]))
-        dep = p.get("deployed")
         ignored = [f for f in p["findings"] + ((dep or {}).get("findings") or []) if f.get("ignored")]
         differs = bool(dep) and dep["status"] == "differs"
         live_top = sorted((f for f in _live(p) if f["severity"] in ("critical", "high", "unknown")),
@@ -1345,12 +1368,17 @@ def render(report, rules, diff=None, tools=None, legacy_previous=None):
                 f"{_n(len(live_top), 'critical, high or unrated advisory').replace('advisorys', 'advisories')} still in what is live:"
                 if live_top else "Nothing critical, high or unrated in what is live."))
             lines += _package_blocks(live_top, False)
+            if behind:
+                in_live = {(f["package"], f["id"]) for f in _live(p)}
+                stale = _counts([f for f in _active(p) if (f["package"], f["id"]) not in in_live])
+                lines += ["", "This checkout is behind what is live, so what only it carries is not counted"
+                          + (" (" + ", ".join(f"{stale[x]} {x}" for x in sorted(stale, key=lambda x: -SEV_ORDER[x])) + ")." if stale else ".")]
             if top:
                 lines += ["", "In this checkout:"]
         elif dep and dep["status"] == "same":
             lines += [f"Live is this checkout ({dep['commit']}).", ""]
         lines += _package_blocks(top, many)
-        rest = _counts([f for f in act if f["severity"] in ("moderate", "low", "info")])
+        rest = _counts([f for f in _counted(p) if f["severity"] in ("moderate", "low", "info")])
         if rest:
             lines.append("- plus " + ", ".join(f"{rest[s]} {s}" for s in ("moderate", "low", "info") if s in rest)
                          + " (in report.json)")

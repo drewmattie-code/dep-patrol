@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.0.1 (2026-11-17)
+
+- **A checkout that is behind the live commit no longer adds its own findings.** With a `deployed` entry, a stale branch of an app that has moved on kept the app on the "needs action" list for holes production had already closed. Now only what is live counts in that case, and the report says the checkout is behind. A checkout that is ahead of live, or on another line, still counts both.
+- The table, the change list and the exit code all follow the same rule.
+
 ## 3.0.0 (2026-11-17)
 
 The theme of this release is a report you can depend on. v2 could produce a believable report that had skipped an ecosystem, filed a production dependency under dev, or shown a finding as fixed when the scan had failed. Each of those is closed here, with a regression test.

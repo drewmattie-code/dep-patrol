@@ -54,6 +54,34 @@ class DeployedTest(Harness):
         rc, p = self.run_scan({"ref": "live"})
         self.assertEqual((rc, len(p["findings"]), p["deployed"]["findings"]), (1, 1, []))
 
+    def test_checkout_behind_live_counts_only_what_is_live(self):
+        # a stale checkout of a patched app used to keep the app on the list for holes that are already closed
+        d = self.project("api")
+        self.commit(d, "old", **{"requirements.txt": BAD})
+        self.git(d, "branch", "stale")
+        self.commit(d, "fix", **{"requirements.txt": GOOD})
+        self.git(d, "tag", "live")
+        self.git(d, "switch", "-q", "stale")
+        rc, p = self.run_scan({"ref": "live"})
+        self.assertEqual((p["deployed"]["status"], p["deployed"]["checkout"]), ("differs", "behind"))
+        self.assertEqual((len(p["findings"]), p["deployed"]["findings"]), (1, []))   # still recorded, not counted
+        self.assertEqual(rc, 0)
+        rc, out = self.main("--config", self.config(exposed=["api"], deployed={"api": {"ref": "live"}}))
+        _, md, _ = self.report()
+        self.assertIn("0 need action", out)
+        self.assertIn("behind what is live", md)
+
+    def test_checkout_ahead_or_on_another_line_counts_both(self):
+        d, live, head = self.repo(first=GOOD, second=BAD)
+        rc, p = self.run_scan({"ref": "live"})
+        self.assertEqual((rc, p["deployed"]["checkout"]), (1, "ahead"))
+        self.git(d, "switch", "-q", "-c", "side", "live")
+        self.commit(d, "side work", **{"notes.txt": "x\n"})
+        self.git(d, "tag", "-f", "live")
+        self.git(d, "switch", "-q", "main")
+        rc, p = self.run_scan({"ref": "live"})
+        self.assertEqual((rc, p["deployed"]["checkout"]), (1, "diverged"))
+
     def test_command_can_report_the_live_commit(self):
         d, live, head = self.repo()
         rc, p = self.run_scan({"command": f"echo '{live}  deployed 3 days ago'"})

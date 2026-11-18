@@ -163,6 +163,30 @@ class DeployedPolicyTest(unittest.TestCase):
         p["findings"] = [fnd(severity="high")]
         self.assertEqual(len(scan.urgent_findings(p, RULES)), 1)
 
+    def test_checkout_behind_live_does_not_count_its_own_findings(self):
+        p = self.with_live(checkout="behind")
+        p["findings"] = [fnd(severity="critical")]
+        self.assertEqual(scan.urgent_findings(p, RULES), [])
+        self.assertEqual(scan.exit_code(rep(p), RULES), 0)
+        md = scan.render(rep(p), RULES, None)
+        self.assertIn("| api | yes |  |  |", md)                       # the table counts what is live
+        self.assertIn("behind what is live", md)
+        p["deployed"]["manifests"] = [man("uv.lock", "failed", "python")]   # live could not be scanned: fall back
+        self.assertEqual(len(scan.urgent_findings(p, RULES)), 1)
+
+    def test_behind_note_tallies_only_what_the_old_checkout_alone_carries(self):
+        p = self.with_live(checkout="behind", findings=[fnd(B, severity="high")])
+        p["findings"] = [fnd(A, severity="critical"), fnd(B, severity="high")]   # B is live too, A is only here
+        md = scan.render(rep(p), RULES, None)
+        self.assertIn("is not counted (1 critical).", md)
+
+    def test_change_list_follows_what_counts(self):
+        prev = rep(self.with_live(findings=[fnd(A, severity="high")], checkout="behind"), generated="2026-10-01")
+        now = self.with_live(checkout="behind")
+        now["findings"] = [fnd(B, severity="high")]                    # only in the stale checkout
+        d = scan.diff_reports(rep(now), prev)
+        self.assertEqual(([f["id"] for _, f in d["fixed"]], d["new"], d["open"]), ([A], [], 0))
+
     def test_unknown_or_unscannable_live_commit_is_incomplete(self):
         self.assertEqual(scan.exit_code(rep(self.with_live(status="failed", detail="command failed", manifests=[])), RULES), 2)
         self.assertEqual(scan.exit_code(rep(self.with_live(manifests=[man("uv.lock", "failed", "python")])), RULES), 2)
