@@ -51,6 +51,9 @@ class Harness(unittest.TestCase):
             p = mock.patch.object(scan, target, side_effect=fake)
             p.start()
             self.addCleanup(p.stop)
+        p = mock.patch.object(scan, "find_depsguard", return_value=None)   # the machine's own depsguard stays out of the tests
+        p.start()
+        self.addCleanup(p.stop)
         p = mock.patch.object(scan, "CACHE_DIR", self.tmp / "cache")
         p.start()
         self.addCleanup(p.stop)

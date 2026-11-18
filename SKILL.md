@@ -56,6 +56,7 @@ A folder with both a JS lockfile and Python manifests is one project with severa
   - Git and local-path packages are skipped and named, because they are not PyPI packages.
   - A `requirements/` folder (`base.txt`, `dev.txt`, `prod.txt`) belongs to the project above it. A file pulled in with `-r` is read as part of the file that includes it, unless it is scanned on its own.
 - **Yarn, Bun, Cargo, Go** (`yarn.lock`, `bun.lock`, `Cargo.lock`, `go.mod`): `osv-scanner` when it is on PATH (`brew install osv-scanner`). Without it they are `unscanned`, with the command to run.
+- **Safeguards** (the package managers' own settings, not lockfiles): `depsguard scan` when it is on PATH. See "Safeguards" below.
 - **Agent configs** (only the files named under `agent_configs`): the OSV.dev API, for the package each MCP server is launched from. See "Agent tools" below.
 - **Not looked at:** Maven, Gradle, Composer, Bundler, NuGet, `Pipfile.lock`, conda. Run `osv-scanner scan source -r .` yourself for those. This is a hard boundary, so a clean report says nothing about them.
 
@@ -156,6 +157,16 @@ Limits to keep in mind:
 
 A critical or high advisory in an agent tool needs action by default. `urgency.high_on_agent_tools: false` leaves only criticals.
 
+### Safeguards
+
+An advisory arrives after a bad release has been found. What stops one in its first hours is a setting in the package manager: a release cooldown (do not install a version until it is some days old) and no install scripts. The scan does not set these. When [depsguard](https://github.com/arnica/depsguard) is on PATH it runs `depsguard scan`, which is read-only, for the machine and for each root, and the report gets a **Safeguards** section.
+
+- Each config file is listed once with what is not set, what needs a newer package manager, and what is set. `report.json` has the same under `safeguards`.
+- It never changes the exit code. Say what is missing when you report the scan, as advice and not as a finding.
+- Without depsguard the section says it was not checked. `"safeguards": false` turns it off. `--repo` and the GitHub Action leave it out.
+- **Do not apply the settings yourself as part of a scan.** Changing how every install on a machine behaves is the owner's call. Tell them what is missing and the two cautions the report prints: a cooldown also refuses a security fix (step 2 below handles that), and blocking install scripts stops native modules from getting their binary until the deploy steps rebuild them by name.
+- Before depsguard goes on a machine, read its source at the release tag and build from that tag. It has no third-party crates, so that is a short read.
+
 ### Reading the change list
 
 Each report opens with what changed since the last one, advisory by advisory:
@@ -214,6 +225,13 @@ For each urgent app, prefer the helper scripts over improvised shell. They refus
    - `--fixes` names the advisories the bump is for. Each must be present before the bump (a wrong id stops here) and gone after it, in a scan that really ran. A bump that leaves the advisory open fails before the tests.
    - Then it runs typecheck, tests and build, and exits non-zero at the first failure. Set `TEST_CMD` or `BUILD_CMD` when the project uses other commands. Python has no default test command, and a bump with no tests exits 3.
    - It stops if the lockfile is not committed.
+   - **When a release cooldown refuses the fix**, the script lets that one fix through and says what it did. Nothing else about the cooldown changes.
+     - npm: one install with `--min-release-age=0`. Everything that command resolved came in with the cooldown off, so read the lockfile diff.
+     - pnpm: the exact version goes into `minimumReleaseAgeExclude` in `pnpm-workspace.yaml`. **Commit that file with the lockfile**, or the next frozen install is refused.
+     - uv: the package goes into `exclude-newer-package` in `uv.toml` or `pyproject.toml`. **Commit that file with `uv.lock`**, or the next `uv lock` quietly goes back to the old version.
+     - If a package you did not name is also too young, the script stops and names it. Look at it, then run again with `ALLOW_YOUNG_DEPS=1`.
+     - Before you let a fresh version in: check that the advisory affects how the app uses the package, and whether an older safe version exists. Going back a version can be safer than taking one published today.
+     - Take the exception out once the version is older than the cooldown. Put that in the commit message so it is not forgotten.
    - Add any other *critical* in production dependencies that has a non-major fix, especially auth libraries.
    - When a transitive package has a same-major fix but its parent pins an old range, an npm `overrides` entry is the surgical fix. Gate it the same way.
 3. **If the gate fails**, check whether it already failed before your bump by building the untouched deployed ref. If it did, say so in the commit message rather than fixing unrelated code.
@@ -237,6 +255,7 @@ Do internal tools after the live apps, and always give a heads-up before restart
 - **Lockfiles that aren't committed** mean a fresh install pulls newer transitive versions. The build can break for reasons unrelated to your bump. Check with the original lockfile before blaming the patch.
 - **Bundled libraries with web workers** (MapLibre 6, PDF.js) can build fine and still fail at runtime when the worker file isn't shipped. Load the page that uses them and check the browser console, not just the build.
 - **npm lists one advisory once per release line.** The same GHSA can appear with a 6.x range and a 7.x range. Reading only the first one can file a production copy under dev. The scanner folds them, so check its answer before trusting a hand count from `npm audit`.
+- **A release cooldown and a lockfile are not the same on every tool.** npm installs from a lockfile whatever the cooldown says. pnpm checks the lockfile against it as well, and reads only the first exception line for a package. uv re-resolves when the project and the lockfile disagree. The bump script handles all three; do not hand-edit around it.
 - **Merged is not deployed.** A fix on `main` with production still on last week's image is the most common false "done". Add a `deployed` entry for every live app.
 - **zsh arrays are 1-indexed.** Loops that pair files with upload slots by index silently shift by one. Run such loops in bash, and checksum what landed.
 

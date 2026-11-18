@@ -35,7 +35,7 @@ except ImportError:  # pragma: no cover
     except ImportError:
         tomllib = None
 
-VERSION = "3.1.0"
+VERSION = "3.2.0"
 SCHEMA = 3
 SKIP_DIRS = {"node_modules", ".git", ".next", "dist", "build", "out", ".venv", "venv", "env", "__pycache__",
              ".turbo", ".open-next", ".wrangler", ".cache", "coverage", "vendor", "target", ".worktrees", "worktrees"}
@@ -1031,8 +1031,158 @@ def agent_project(entries, problems=None):
 
 
 # ------------------------------------------------------------------ config
+# ------------------------------------------------------------------ safeguards
+# Not vulnerabilities: the package managers' own settings that keep a release from the last few days, which no
+# advisory covers yet, from being installed or from running code as it installs. depsguard (MIT, arnica/depsguard)
+# knows which setting each version of each manager takes, so it is asked when it is installed, the way osv-scanner
+# is for the lockfiles this file does not read itself. Read-only: `depsguard scan` writes nothing.
+DEPSGUARD_URL = "https://github.com/arnica/depsguard"
+_ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
+_DG_STATE = {"✓": "ok", "ℹ": "unsupported"}          # anything else beside a setting means it needs doing
+_DG_BADGE = re.compile(r"\s+(ACTION NEEDED|WARNING|SECURE)\s*$")
+
+
+def find_depsguard():
+    return shutil.which("depsguard")
+
+
+def depsguard_version(exe):
+    v = tool_version([exe, "--version"]) or ""
+    m = re.search(r"\d+(?:\.\d+)+", v)
+    return m.group(0) if m else None
+
+
+def depsguard_scan(exe, cwd, search):
+    """(exit code, stdout, stderr). 0 = every setting is set, 1 = something is not, anything else = it did not run."""
+    return run([exe, "scan", "--no-color"] + ([] if search else ["--no-search"]), cwd, timeout=180)
+
+
+def parse_depsguard(text):
+    """The report as a list of config files, each with its settings. Lenient: text in a shape this does not know
+    gives an empty list, and the caller keeps the text as it came."""
+    lines = [_ANSI.sub("", ln).rstrip() for ln in text.replace("\r", "\n").split("\n")]
+    blocks = []
+    for i, ln in enumerate(lines):
+        m = re.match(r"^\s+Config: (.+)$", ln)
+        if not m or i == 0:
+            continue
+        head = _DG_BADGE.sub("", lines[i - 1]).strip()
+        badge = _DG_BADGE.search(lines[i - 1])
+        what = re.sub(r"^[^\w(]+", "", " · ".join(re.sub(r"^[^\w(]+", "", part).strip() for part in head.split(" · ")))
+        items = []
+        for row in lines[i + 1:]:
+            row = row.strip()
+            if not row:
+                break
+            mark, _, rest = row.partition(" ")
+            if not rest or mark.isascii():
+                break
+            items.append({"state": _DG_STATE.get(mark, "missing"),
+                          "text": rest.strip().replace(" — ", ": ", 1).replace(" · ", ". ")})
+        blocks.append({"config": m.group(1).strip(), "what": what, "badge": badge.group(1) if badge else None,
+                       "items": items})
+    return blocks
+
+
+def _dg_plain(text):
+    """The tool's own words with the banner, the progress line and the colour codes taken out."""
+    keep = [_ANSI.sub("", ln).rstrip() for ln in text.replace("\r", "\n").split("\n")]
+    keep = [ln for ln in keep if not re.search(r"[╭╮╰╯│]|Checking \w+ configuration", ln)]
+    return "\n".join(keep).strip()
+
+
+def safeguards(cfg, enabled=True):
+    """What the report says about the package managers' settings. Never raises, and never changes the exit code."""
+    if not enabled or cfg.get("safeguards") is False:
+        return {"tool": "depsguard", "status": "off"}
+    exe = find_depsguard()
+    if not exe:
+        return {"tool": "depsguard", "status": "not_installed"}
+    out = {"tool": "depsguard", "version": depsguard_version(exe), "status": "ok", "detail": None,
+           "counts": {"missing": 0, "unsupported": 0, "ok": 0}, "configs": [], "raw": None}
+    roots = [Path(os.path.expanduser(r)) for r in cfg["roots"]]
+    runs = [(Path.home(), False)] + [(r, True) for r in roots if r.is_dir()]
+    seen, failed, raw, action = set(), [], [], False
+    for cwd, search in runs:
+        try:
+            rc, text, err = depsguard_scan(exe, cwd, search)
+        except Exception as e:                       # a tool that is not ours must never take the scan down with it
+            rc, text, err = None, "", f"{type(e).__name__}: {e}"
+        if rc not in (0, 1):
+            failed.append(f"{cwd}: {_tail(err, text) or 'no output'}")
+            continue
+        action = action or rc == 1
+        blocks = parse_depsguard(text)
+        if not blocks and rc == 1:
+            raw.append(_dg_plain(text))
+        for b in blocks:
+            if b["config"] in seen:
+                continue
+            seen.add(b["config"])
+            b["where"] = "code" if search else "machine"
+            out["configs"].append(b)
+            for it in b["items"]:
+                out["counts"][it["state"]] += 1
+    if failed and len(failed) == len(runs):
+        out.update(status="failed", detail="; ".join(failed))
+        return out
+    out["status"] = "action" if action or out["counts"]["missing"] else "ok"
+    out["detail"] = ("not checked in " + "; ".join(failed)) if failed else None
+    out["raw"] = "\n\n".join(raw) or None
+    return out
+
+
+def _safeguard_lines(s):
+    if not s or s["status"] == "off":
+        return []
+    lines = ["", "## Safeguards", ""]
+    intro = ("Not vulnerabilities: these are the package managers' own settings that keep a release from the last few "
+             "days, which no advisory covers yet, from being installed or from running code as it installs.")
+    if s["status"] == "not_installed":
+        return lines + [intro, "", f"Not checked: depsguard is not installed. It reads those settings and says which "
+                        f"are missing, and this report includes its answer when it is on the PATH: {DEPSGUARD_URL}"]
+    tool = f"depsguard {s['version']}" if s.get("version") else "depsguard"
+    if s["status"] == "failed":
+        return lines + [intro, "", f"These could not be checked: {tool} did not run. {s['detail']}"]
+    c = s["counts"]
+    lines += [intro + f" Read with {tool}, which changes nothing in this mode.", ""]
+    if s["status"] == "ok":
+        return lines + [f"Every setting it checks is set ({_n(c['ok'], 'setting')} in "
+                        f"{_n(len(s['configs']), 'config file')})."]
+    if s["configs"]:
+        lines += [f"**{c['missing']} not set**, {c['unsupported']} need a newer package manager, {c['ok']} set, "
+                  f"in {_n(len(s['configs']), 'config file')}. This is not counted in the exit code.", ""]
+    for where, title in (("machine", "This machine"), ("code", "In your code folders")):
+        group = [b for b in s["configs"] if b["where"] == where]
+        todo = [b for b in group if any(i["state"] != "ok" for i in b["items"])]
+        if not group:
+            continue
+        lines += [f"### {title}", ""]
+        for b in todo[:40]:
+            lines.append(f"- `{b['config']}`" + (f" ({b['what']})" if b["what"] else ""))
+            lines += [f"  - {i['text']}" for i in b["items"]]
+        if len(todo) > 40:
+            lines.append(f"- and {len(todo) - 40} more: run `depsguard scan` in the folder to see them all")
+        done = len(group) - len(todo)
+        if done:
+            lines.append(f"- {done} more ha{'s' if done == 1 else 've'} everything set")
+        lines.append("")
+    if s.get("raw"):
+        lines += ["depsguard answered in a layout this report does not know, so here it is as it came:", "", "```text",
+                  s["raw"], "```", ""]
+    if s.get("detail"):
+        lines += [f"Part of this could not be checked: {s['detail']}", ""]
+    lines += ["Before you turn these on:", "",
+              "- **A release cooldown also delays a security fix.** `scripts/bump-and-verify.sh` installs a named fix "
+              "past the cooldown, for that fix only, and tells you what to commit with it.",
+              "- **Blocking install scripts stops native modules from getting their binary** (better-sqlite3, sharp, "
+              "esbuild). Rebuild those by name in your deploy steps before you switch it on.",
+              "- To apply them, run `depsguard` and pick the fixes. It backs each file up first."]
+    return lines
+
+
 CONFIG_KEYS = {"roots", "include", "exclude", "exposed", "max_depth", "notify", "out", "urgency", "ignore",
-               "osv_cache_days", "deployed", "agent_configs", "_notes"}
+               "osv_cache_days", "deployed", "agent_configs", "safeguards", "_notes"}
 # unknown_on_exposed is off by default: Rust and Go advisories are often published with no rating at all,
 # so turning it on means a live Rust or Go app always needs action. Unrated advisories are always listed.
 # high_on_agent_tools is on by default: an MCP server runs on this machine with the agent's credentials, and takes
@@ -1650,6 +1800,7 @@ def render(report, rules, diff=None, tools=None, legacy_previous=None):
     if quiet["covered"] or quiet["skipped"]:
         lines += ["", f"{_n(quiet['covered'], 'lockfile')} covered by a workspace root, "
                       f"{_n(quiet['skipped'], 'extra lockfile')} skipped (both listed in report.json)."]
+    lines += _safeguard_lines(report.get("safeguards"))
     if report.get("warnings"):
         lines += ["", "## Warnings", ""] + [f"- {w}" for w in report["warnings"]]
     if tools:
@@ -1776,6 +1927,7 @@ def main(argv=None):
         return verify_fixed(projects, a.verify_fixed)
     report = {"schema": SCHEMA, "version": VERSION, "generated": today(), "problems": problems, "warnings": warnings,
               "projects": projects}
+    report["safeguards"] = safeguards(cfg, enabled=not a.repo)   # one repository, perhaps in CI: not this machine's settings
     # A one-repo run must never land in the machine-wide report folder: it would become "the last scan"
     # and the next monthly change list would be nonsense. With --repo, files are written only when --out says where.
     out_dir = a.out or (None if a.repo else cfg.get("out") or DEFAULT_OUT)
@@ -1787,6 +1939,9 @@ def main(argv=None):
     rules = cfg["urgency"]
     rc = exit_code(report, rules, a.strict)
     summary = summarize(report, rules)
+    if report["safeguards"]["status"] == "action":
+        todo = report["safeguards"]["counts"]["missing"]
+        summary += f". Safeguards: {todo} not set" if todo else ". Safeguards: something is not set"
     if a.sarif:
         Path(a.sarif).parent.mkdir(parents=True, exist_ok=True)
         Path(a.sarif).write_text(json.dumps(sarif(report, rules), indent=1))
@@ -1807,6 +1962,8 @@ def main(argv=None):
         if any(m["ecosystem"] == "mcp" for p in projects for m in p["manifests"]):
             tools["agent configs"] = ("OSV querybatch for the package each MCP server launches; registry.npmjs.org and "
                                       "pypi.org for the newest release of an unpinned one")
+        if report["safeguards"].get("version"):
+            tools["depsguard"] = f"{report['safeguards']['version']} (depsguard scan --no-color, read-only)"
         diff = diff_reports(report, prev)
         md = render(report, rules, diff, tools, legacy_previous=prev_name if prev is not None and diff is None else None)
         (out / "report.md").write_text(md)

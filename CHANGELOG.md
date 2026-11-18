@@ -1,5 +1,34 @@
 # Changelog
 
+## 3.2.0 (2026-11-18)
+
+The other half of dependency safety: the settings that stop a bad release before any advisory exists, and a patch step that still works once they are on.
+
+### New
+
+- **Safeguards in the report.** When [depsguard](https://github.com/arnica/depsguard) is on the PATH, the scan runs `depsguard scan` (read-only) for this machine and for each root, and the report gets a **Safeguards** section: every package manager config file, which settings are not set, which need a newer package manager, and which are set. It is in `report.json` under `safeguards`.
+  - A config file is listed once, however many roots it shows up under.
+  - Without depsguard the section is one line that says so. A check that could not run says so too.
+  - It never changes the exit code. A missing setting is not a vulnerability.
+  - `"safeguards": false` in the config turns it off. `--repo` and the GitHub Action leave it out: a repository run is not about this machine's settings.
+- **A fix that is younger than a release cooldown still goes in.** A cooldown (npm `min-release-age`, pnpm `minimumReleaseAge`, uv `exclude-newer`) refuses yesterday's patch as well as yesterday's poisoned release. `bump-and-verify.sh` now tries the install as it is, and only when the tool refuses it for that reason lets the named fix through, the narrowest way each tool has:
+  - **npm:** one install with `--min-release-age=0`. The setting itself is not touched.
+  - **pnpm:** the exact version is added to `minimumReleaseAgeExclude` in `pnpm-workspace.yaml`, to be committed with the lockfile.
+  - **uv:** the package is added to `exclude-newer-package` in `uv.toml` or `pyproject.toml`, to be committed with `uv.lock`, and `uv lock --check` must pass.
+  - **Pinned requirements:** the pins are edited as before, and the script says so when pip has a cutoff that the next install will hit.
+  - A package you did not name that is also too young stops the bump, with its name. `ALLOW_YOUNG_DEPS=1` lets it in.
+
+### Good to know
+
+- All of this was tried against the real tools on 2026-11-18 (npm 11.21.3, pnpm 11.2.2, uv 0.11.21), and three things came out of it that the documentation does not make obvious:
+  - **npm installs from a lockfile whatever the cooldown says.** One command with it off is enough, and `npm ci` on the server is not affected.
+  - **pnpm holds a lockfile install to the cooldown too.** An exception that is taken out again after the bump makes the next `pnpm install --frozen-lockfile` fail, so it has to stay in the repo until the version is old enough.
+  - **pnpm reads only the first entry for a package.** A second line for the same name is ignored, so the script writes one line with the versions joined by `||`.
+  - **uv quietly undoes an exception given only on the command line.** The next `uv lock` re-resolves to the old version. Written in the project, it holds.
+- npm needs 11.10 or later for `min-release-age`. An older npm reads the setting back but does not enforce it.
+- With the npm route, everything that one command resolves comes in with the cooldown off, not only the package you named. Read the lockfile diff.
+- depsguard is a separate MIT tool by Arnica. dep-patrol works with it and is not affiliated with it. It reads the settings; applying them is left to `depsguard` or to you.
+
 ## 3.1.0 (2026-11-17)
 
 The coding agent's own tools are now part of the patrol.

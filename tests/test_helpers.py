@@ -289,5 +289,238 @@ codes=($SCAN_CODES); echo "scan $*" >> "{self.log}"; exit ${{codes[$n]:-0}}''')
         self.assertIn("no lockfile", out)
 
 
+# What each package manager really says when a version is younger than its release cooldown, recorded 2026-11-18
+# from npm 11.21.3, pnpm 11.2.2 and uv 0.11.21 (the package names and dates are changed, the wording is theirs).
+NPM_TOO_NEW = """npm error code ETARGET
+npm error notarget No matching version found for next@16.4.6 with a date before 2026-11-11, 3:56:58 p.m..
+npm error notarget In most cases you or one of your dependencies are requesting a package version that doesn't exist."""
+PNPM_TOO_NEW = """[ERR_PNPM_NO_MATURE_MATCHING_VERSION] {n} version{s} not meet the minimumReleaseAge constraint:
+{rows}"""
+PNPM_ROW = "  {spec} was published at 2026-11-17T15:08:58.238Z, within the minimumReleaseAge cutoff (2026-11-11T20:57:25.055Z)"
+UV_TOO_NEW = """  x No solution found when resolving dependencies:
+  Because there is no version of jinja2==3.1.6 and your project depends on jinja2==3.1.6, we can conclude that your
+  project's requirements are unsatisfiable.
+hint: `jinja2` was filtered by `exclude-newer` to only include packages uploaded before 2026-11-11T00:00:00Z. The requested version, v3.1.6, was published at 2026-11-17T16:08:19.53Z. Consider using `exclude-newer-package` to override the cutoff for this package."""
+
+
+class CooldownBumpTest(BumpAndVerifyTest):
+    """A release cooldown refuses the fix. The bump lets that one fix through, the narrowest way each tool has."""
+
+    def says(self, name, text):
+        f = self.tmp / f"{name}.says"
+        f.write_text(text + "\n")
+        return f
+
+    # ---- npm: the lockfile install is not held to the cooldown, so one command with it off is enough
+    def npm_refuses(self, text=NPM_TOO_NEW):
+        self.stub("npm", f'echo "npm $*" >> "{self.log}"\n[ "$1" = install ] || exit 0\n'
+                         f'case "$*" in *--min-release-age=0*) exit 0;; esac\ncat "{self.says("npm", text)}" >&2; exit 1')
+
+    def test_npm_fix_younger_than_the_cooldown_goes_in_with_it_off_for_that_one_command(self):
+        self.repo(**{"package.json": "{}", "package-lock.json": "{}"})
+        self.npm_refuses()
+        rc, out, tested = self.bump("--fixes", "GHSA-aaaa-aaaa-aaaa", "next@16.4.6")
+        self.assertEqual((rc, tested), (0, True), out)
+        installs = [c for c in self.calls().splitlines() if c.startswith("npm install")]
+        self.assertEqual(installs, ["npm install --save-exact next@16.4.6",
+                                    "npm install --save-exact next@16.4.6 --min-release-age=0"])
+        self.assertIn("release cooldown", out)
+        self.assertIn("next@16.4.6", out)
+        self.assertIn("lockfile diff", out)             # everything that command resolved came in with the cooldown off
+
+    def test_npm_with_no_refusal_is_never_given_the_flag(self):
+        self.repo(**{"package.json": "{}", "package-lock.json": "{}"})
+        rc, out, _ = self.bump("--fixes", "GHSA-aaaa-aaaa-aaaa", "next@16.4.6")
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn("min-release-age", self.calls())
+        self.assertNotIn("cooldown", out)
+
+    def test_npm_failing_for_another_reason_is_not_tried_again(self):
+        self.repo(**{"package.json": "{}", "package-lock.json": "{}"})
+        self.npm_refuses("npm error code ERESOLVE\nnpm error ERESOLVE unable to resolve dependency tree")
+        rc, out, tested = self.bump("--fixes", "GHSA-aaaa-aaaa-aaaa", "next@16.4.6")
+        self.assertEqual((rc == 0, tested), (False, False), out)
+        self.assertEqual(self.calls().count("npm install"), 1)
+        self.assertIn("ERESOLVE", out)
+
+    # ---- pnpm: a lockfile install IS held to the cooldown, so the exception has to live in the repo
+    def pnpm_refuses(self, *specs):
+        """A stand-in that lets a version in the way pnpm 11.2.2 really does (tried 2026-11-18): only the FIRST entry
+        for a package counts, and that entry is the name alone, one version, or several joined with ||."""
+        rows = "\n".join(PNPM_ROW.format(spec=s) for s in specs)
+        text = PNPM_TOO_NEW.format(n=len(specs), s=" does" if len(specs) == 1 else "s do", rows=rows)
+        check = self.tmp / "let-in.py"
+        check.write_text("""import re, sys
+entries = {}
+try:
+    lines = open("pnpm-workspace.yaml").read().splitlines()
+except OSError:
+    lines = []
+on = False
+for ln in lines:
+    if re.match(r"^minimumReleaseAgeExclude:\\s*$", ln):
+        on = True
+    elif on and re.match(r"^\\s+-\\s", ln):
+        item = ln.split("-", 1)[1].strip().strip("'\\"")
+        m = re.match(r"^(@?[^@]+)(?:@(.+))?$", item)
+        entries.setdefault(m.group(1), [v.strip() for v in (m.group(2) or "").split("||") if v.strip()])
+    elif on:
+        on = False
+for spec in sys.argv[1:]:
+    name, _, ver = spec.rpartition("@")
+    if name not in entries or (entries[name] and ver not in entries[name]):
+        sys.exit(1)
+""")
+        need = " ".join(f"'{s}'" for s in specs)
+        self.stub("pnpm", f'echo "pnpm $*" >> "{self.log}"\n[ "$1" = add ] || exit 0\n'
+                          f'python3 "{check}" {need} || {{ cat "{self.says("pnpm", text)}"; exit 1; }}\nexit 0')
+
+    def workspace(self):
+        return (self.work / "pnpm-workspace.yaml").read_text()
+
+    def test_pnpm_fix_younger_than_the_cooldown_is_named_in_the_workspace_file(self):
+        self.repo(**{"package.json": "{}", "pnpm-lock.yaml": "", "pnpm-workspace.yaml": "packages:\n  - apps/*\nminimumReleaseAge: 10080\n"})
+        self.pnpm_refuses("next@16.4.6")
+        rc, out, tested = self.bump("--fixes", "GHSA-aaaa-aaaa-aaaa", "next@16.4.6")
+        self.assertEqual((rc, tested), (0, True), out)
+        self.assertEqual(self.workspace(), "packages:\n  - apps/*\nminimumReleaseAge: 10080\nminimumReleaseAgeExclude:\n  - next@16.4.6\n")
+        self.assertEqual(self.calls().count("pnpm add --save-exact next@16.4.6"), 2)
+        self.assertIn("commit pnpm-workspace.yaml", out.lower())
+        self.assertIn("older than the cooldown", out)   # when to take the line out again
+
+    def test_pnpm_project_with_no_workspace_file_gets_one(self):
+        self.repo(**{"package.json": "{}", "pnpm-lock.yaml": ""})
+        self.pnpm_refuses("next@16.4.6")
+        rc, out, _ = self.bump("--fixes", "GHSA-aaaa-aaaa-aaaa", "next@16.4.6")
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(self.workspace(), "minimumReleaseAgeExclude:\n  - next@16.4.6\n")
+
+    def test_pnpm_adds_to_a_list_that_is_already_there_and_never_twice(self):
+        before = "minimumReleaseAge: 10080\nminimumReleaseAgeExclude:\n  - left-pad@1.3.0\n  - next@16.4.6\nonlyBuiltDependencies:\n  - sharp\n"
+        self.repo(**{"package.json": "{}", "pnpm-lock.yaml": "", "pnpm-workspace.yaml": before})
+        self.pnpm_refuses("next@16.4.6", "eslint-config-next@16.4.6")
+        rc, out, _ = self.bump("--fixes", "GHSA-aaaa-aaaa-aaaa", "next@16.4.6", "eslint-config-next@16.4.6")
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(self.workspace(), "minimumReleaseAge: 10080\nminimumReleaseAgeExclude:\n  - left-pad@1.3.0\n  - next@16.4.6\n"
+                                           "  - eslint-config-next@16.4.6\nonlyBuiltDependencies:\n  - sharp\n")
+
+    def test_pnpm_package_with_an_older_exception_gets_both_versions_on_one_line(self):
+        # found by running the real thing: a second entry for the same package is ignored, so the fix stayed refused
+        before = "minimumReleaseAge: 10080\nminimumReleaseAgeExclude:\n  - next@16.4.5\n  - '@next/env@16.4.5'\n"
+        self.repo(**{"package.json": "{}", "pnpm-lock.yaml": "", "pnpm-workspace.yaml": before})
+        self.pnpm_refuses("next@16.4.6", "@next/env@16.4.6")
+        rc, out, _ = self.bump("--fixes", "GHSA-aaaa-aaaa-aaaa", "next@16.4.6", "@next/env@16.4.6")
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(self.workspace(), "minimumReleaseAge: 10080\nminimumReleaseAgeExclude:\n  - 'next@16.4.5 || 16.4.6'\n"
+                                           "  - '@next/env@16.4.5 || 16.4.6'\n")
+
+    def test_pnpm_package_already_let_in_by_name_is_left_alone(self):
+        before = "minimumReleaseAgeExclude:\n  - next\n"
+        self.repo(**{"package.json": "{}", "pnpm-lock.yaml": "", "pnpm-workspace.yaml": before})
+        self.pnpm_refuses("next@16.4.6", "eslint-config-next@16.4.6")
+        rc, out, _ = self.bump("--fixes", "GHSA-aaaa-aaaa-aaaa", "next@16.4.6", "eslint-config-next@16.4.6")
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(self.workspace(), "minimumReleaseAgeExclude:\n  - next\n  - eslint-config-next@16.4.6\n")
+
+    def test_pnpm_list_written_on_one_line_stops_and_says_what_to_add(self):
+        before = "minimumReleaseAge: 10080\nminimumReleaseAgeExclude: [left-pad]\n"
+        self.repo(**{"package.json": "{}", "pnpm-lock.yaml": "", "pnpm-workspace.yaml": before})
+        self.pnpm_refuses("next@16.4.6")
+        rc, out, tested = self.bump("--fixes", "GHSA-aaaa-aaaa-aaaa", "next@16.4.6")
+        self.assertEqual((rc == 0, tested, self.workspace()), (False, False, before), out)
+        self.assertIn("STOP", out)
+        self.assertIn("next@16.4.6", out)
+
+    def test_pnpm_another_package_too_young_stops_unless_it_is_allowed(self):
+        self.repo(**{"package.json": "{}", "pnpm-lock.yaml": ""})
+        self.pnpm_refuses("next@16.4.6", "@next/env@16.4.6")
+        rc, out, tested = self.bump("--fixes", "GHSA-aaaa-aaaa-aaaa", "next@16.4.6")
+        self.assertEqual((rc == 0, tested), (False, False), out)
+        self.assertIn("STOP", out)
+        self.assertIn("@next/env@16.4.6", out)
+        self.assertIn("ALLOW_YOUNG_DEPS=1", out)
+        self.assertFalse((self.work / "pnpm-workspace.yaml").exists())      # all or nothing
+        (self.tmp / "count").unlink()
+        rc, out, tested = self.bump("--fixes", "GHSA-aaaa-aaaa-aaaa", "next@16.4.6", ALLOW_YOUNG_DEPS="1")
+        self.assertEqual((rc, tested), (0, True), out)
+        self.assertEqual(self.workspace(), "minimumReleaseAgeExclude:\n  - next@16.4.6\n  - '@next/env@16.4.6'\n")
+
+    # ---- uv: a later `uv lock` or `uv sync --locked` quietly takes the fix back out unless the project says to keep it
+    def uv_refuses(self, check=0):
+        self.stub("uv", f'echo "uv $*" >> "{self.log}"\n[ "$1 $2" = "lock --check" ] && exit {check}\n'
+                        f'grep -qE \'^jinja2 = "\' uv.toml pyproject.toml 2>/dev/null && exit 0\n'
+                        f'cat "{self.says("uv", UV_TOO_NEW)}" >&2; exit 1')
+
+    def test_uv_fix_younger_than_the_cutoff_is_named_in_the_project(self):
+        self.repo(**{"pyproject.toml": '[project]\nname = "x"\n\n[tool.uv]\nexclude-newer = "7 days"\n', "uv.lock": ""})
+        self.uv_refuses()
+        rc, out, tested = self.bump("--fixes", "GHSA-aaaa-aaaa-aaaa", "jinja2@3.1.6")
+        self.assertEqual((rc, tested), (0, True), out)
+        text = (self.work / "pyproject.toml").read_text()
+        self.assertRegex(text, r'\[tool\.uv\.exclude-newer-package\]\njinja2 = "20\d\d-\d\d-\d\dT\d\d:\d\d:\d\dZ"\n$')
+        self.assertTrue(text.startswith('[project]\nname = "x"\n\n[tool.uv]\nexclude-newer = "7 days"\n'))
+        uv = [c for c in self.calls().splitlines() if c.startswith("uv ")]
+        self.assertEqual(uv, ["uv lock --upgrade-package jinja2==3.1.6", "uv lock --upgrade-package jinja2==3.1.6", "uv lock --check"])
+        self.assertIn("commit pyproject.toml", out.lower())
+
+    def test_uv_project_with_its_own_uv_toml_gets_it_there(self):
+        self.repo(**{"pyproject.toml": '[project]\nname = "x"\n', "uv.toml": 'exclude-newer = "7 days"\n', "uv.lock": ""})
+        self.uv_refuses()
+        rc, out, _ = self.bump("--fixes", "GHSA-aaaa-aaaa-aaaa", "jinja2@3.1.6")
+        self.assertEqual(rc, 0, out)
+        self.assertRegex((self.work / "uv.toml").read_text(), r'^exclude-newer = "7 days"\n\n\[exclude-newer-package\]\njinja2 = "20[^"]+Z"\n$')
+        self.assertEqual((self.work / "pyproject.toml").read_text(), '[project]\nname = "x"\n')
+
+    def test_uv_adds_to_a_table_that_is_already_there(self):
+        before = 'exclude-newer = "7 days"\n\n[exclude-newer-package]\nidna = "2026-11-01T00:00:00Z"\n\n[pip]\nindex-url = "https://example.test/simple"\n'
+        self.repo(**{"pyproject.toml": '[project]\nname = "x"\n', "uv.toml": before, "uv.lock": ""})
+        self.uv_refuses()
+        rc, out, _ = self.bump("--fixes", "GHSA-aaaa-aaaa-aaaa", "jinja2@3.1.6")
+        self.assertEqual(rc, 0, out)
+        self.assertRegex((self.work / "uv.toml").read_text(),
+                         r'^exclude-newer = "7 days"\n\n\[exclude-newer-package\]\nidna = "2026-11-01T00:00:00Z"\njinja2 = "20[^"]+Z"\n\n\[pip\]\nindex-url')
+
+    def test_uv_exception_written_on_one_line_stops_and_says_what_to_add(self):
+        before = '[project]\nname = "x"\n\n[tool.uv]\nexclude-newer = "7 days"\nexclude-newer-package = { idna = "2026-11-01T00:00:00Z" }\n'
+        self.repo(**{"pyproject.toml": before, "uv.lock": ""})
+        self.uv_refuses()
+        rc, out, tested = self.bump("--fixes", "GHSA-aaaa-aaaa-aaaa", "jinja2@3.1.6")
+        self.assertEqual((rc == 0, tested, (self.work / "pyproject.toml").read_text()), (False, False, before), out)
+        self.assertIn("STOP", out)
+        self.assertIn("jinja2", out)
+
+    def test_uv_lockfile_that_no_longer_matches_the_project_fails_the_bump(self):
+        self.repo(**{"pyproject.toml": '[project]\nname = "x"\n', "uv.lock": ""})
+        self.uv_refuses(check=1)
+        rc, out, tested = self.bump("--fixes", "GHSA-aaaa-aaaa-aaaa", "jinja2@3.1.6")
+        self.assertEqual((rc == 0, tested), (False, False), out)
+        self.assertIn("FAILED", out)
+
+    def test_uv_with_no_refusal_changes_no_file(self):
+        self.repo(**{"pyproject.toml": '[project]\nname = "x"\n', "uv.lock": ""})
+        rc, out, _ = self.bump("--fixes", "GHSA-aaaa-aaaa-aaaa", "jinja2@3.1.6")
+        self.assertEqual((rc, (self.work / "pyproject.toml").read_text()), (0, '[project]\nname = "x"\n'), out)
+        self.assertNotIn("lock --check", self.calls())
+
+    # ---- pinned requirements: nothing is installed here, but the install that follows may be refused
+    def test_requirements_bump_says_so_when_pip_has_a_cutoff(self):
+        self.repo(**{"requirements.txt": "requests==2.31.0\n"})
+        for name in ("pip", "pip3"):
+            self.stub(name, 'if [ "$1 $2 $3" = "config get install.uploaded-prior-to" ]; then echo P7D; exit 0; fi; exit 1')
+        rc, out, _ = self.bump("--fixes", "GHSA-aaaa-aaaa-aaaa", "requests@2.32.0", TEST_CMD="true")
+        self.assertEqual(rc, 0, out)
+        self.assertIn("uploaded-prior-to", out)
+        self.assertIn("P0D", out)
+
+    def test_requirements_bump_is_quiet_when_pip_has_none(self):
+        self.repo(**{"requirements.txt": "requests==2.31.0\n"})
+        for name in ("pip", "pip3"):
+            self.stub(name, "exit 1")
+        rc, out, _ = self.bump("--fixes", "GHSA-aaaa-aaaa-aaaa", "requests@2.32.0", TEST_CMD="true")
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn("uploaded-prior-to", out)
+
+
+
 if __name__ == "__main__":
     unittest.main()

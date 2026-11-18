@@ -18,13 +18,14 @@ It is built around one rule: **a scan that did not run is never reported as clea
 - **Says whether it ships.** Production and dev are told apart from the lockfile itself, per installed copy. When a format cannot say, the finding is marked "scope not known" and counted as production.
 - **Ranks** live apps first, then by worst severity. You set what counts as urgent, and you can ignore a single advisory if you give a reason.
 - **Checks your agent's own tools.** Name your agent config files and it checks the package each MCP server is launched from, and lists every launch that is not pinned to a version.
+- **Reports the safeguards you have not set.** With depsguard installed, it lists the package manager settings that would stop a bad release before any advisory exists (a release cooldown, no install scripts), on this machine and in your repos.
 - **Checks what is live.** Tell it how to find the deployed commit and it scans that commit too. "The fix is merged, but production still runs the affected version" becomes a line in the report.
 - **Remembers.** Each report opens with what is new, fixed or still open since the last run. "Fixed" needs a successful rescan. A manifest that failed this time keeps its last known findings.
 - **Reports** in Markdown, JSON and SARIF, and alerts through any shell command you configure (desktop notification, Slack webhook, Telegram bot), both when something needs action and when the scan itself broke.
 - **Runs in CI** as a GitHub Action that fails the job on findings and on an incomplete scan.
 - **Patches safely.** `SKILL.md` is the agent's playbook, and helper scripts turn the risky steps into commands that refuse unsafe states:
   - `branch-from-deployed.sh` branches from what is actually deployed.
-  - `bump-and-verify.sh` bumps, proves the named advisory is gone, then runs the test gate (npm, pnpm, uv, pinned requirements).
+  - `bump-and-verify.sh` bumps, proves the named advisory is gone, then runs the test gate (npm, pnpm, uv, pinned requirements). A fix that is younger than a release cooldown is let through for that fix only.
   - `record-rollback.sh` records what to roll back to, and refuses to record nothing.
   - `smoke-check.sh` checks production after the deploy.
 
@@ -32,7 +33,7 @@ It is built around one rule: **a scan that did not run is never reported as clea
 
 ```bash
 git clone https://github.com/drewmattie-code/dep-patrol ~/.claude/skills/dep-patrol
-cd ~/.claude/skills/dep-patrol                        # to pin a release: git checkout v3.1.0
+cd ~/.claude/skills/dep-patrol                        # to pin a release: git checkout v3.2.0
 python3 scripts/scan.py --roots ~/code --dry-run     # lists what it found, no network
 python3 scripts/scan.py --roots ~/code               # the real thing
 ```
@@ -147,6 +148,31 @@ The report gets an **Agent tools** section that lists every server and how far i
 
 A critical or high advisory in an agent tool counts as needing action (`urgency.high_on_agent_tools`). From each server entry only the command, its arguments and the host of a URL are read. Env values, headers and arguments never reach the report.
 
+## Safeguards: the half a scanner cannot do
+
+A scanner works from advisories, so it can only tell you about a bad version after someone has reported it. A poisoned release is at its most dangerous in its first hours, before any advisory exists. What stops it then is not a scan. It is a handful of settings in the package managers themselves:
+
+- **A release cooldown**: do not install a version until it is some days old.
+- **No install scripts**: a package cannot run code as it installs.
+- For pnpm, a few more: no sub-dependencies from a git or tarball address, no provenance downgrade, no unreviewed build scripts.
+
+dep-patrol does not set these. It **works with [depsguard](https://github.com/arnica/depsguard)**, a small MIT command-line tool by Arnica that knows which setting each version of each package manager takes. When `depsguard` is on the PATH, the scan runs `depsguard scan`, which changes nothing, and adds a **Safeguards** section to the report: each config file on the machine and in your repos, and what is not set. It never changes the exit code. Without depsguard the section says it was not checked. (dep-patrol is not affiliated with Arnica.)
+
+Two things to know before you switch them on, because the two tools meet here:
+
+1. **A cooldown refuses a security fix too.** The patched version is often a day old. `bump-and-verify.sh` tries the install as it is and, only when it is refused for being too young, lets that one fix through:
+
+   | Tool | What the script does | What you commit |
+   |---|---|---|
+   | npm | one install with `--min-release-age=0` | the lockfile |
+   | pnpm | adds the exact version to `minimumReleaseAgeExclude` in `pnpm-workspace.yaml` | that file and the lockfile |
+   | uv | adds the package to `exclude-newer-package` in `uv.toml` or `pyproject.toml` | that file and `uv.lock` |
+
+   With pnpm and uv the exception has to stay in the repo until the version is older than the cooldown. Taken out early, pnpm refuses the next frozen install and uv quietly goes back to the old version. Both were seen happening with the real tools.
+2. **Blocking install scripts stops native modules from getting their binary** (better-sqlite3, sharp, esbuild and others). Rebuild those by name in your deploy steps before you switch it on, or the next deploy starts an app that cannot load them.
+
+A sensible order: the cooldown first, then install scripts once the deploy steps are ready.
+
 ## Exit codes
 
 | Code | Meaning |
@@ -159,6 +185,7 @@ A critical or high advisory in an agent tool counts as needing action (`urgency.
 
 - Python 3.9+. Reading `poetry.lock` and `uv.lock` needs 3.11+ (or `pip install tomli`). On an older Python those lockfiles are reported as not scanned.
 - npm for JavaScript projects. pnpm and `osv-scanner` are optional and widen the coverage.
+- `depsguard` is optional. With it on the PATH the report gains the Safeguards section.
 - git, for the live commit check.
 - Network access to the npm registry and api.osv.dev, and to pypi.org when `agent_configs` is set. Only package names and versions are sent, no source code.
 
@@ -167,6 +194,7 @@ A critical or high advisory in an agent tool counts as needing action (`urgency.
 - Maven, Gradle, Composer, Bundler, NuGet, `Pipfile.lock` and conda are not looked at. Run `osv-scanner` yourself for those.
 - Requirements that are not pinned to an exact version cannot be audited. They are named in the report.
 - For an MCP server, only the package it is launched from is checked, not what that package installs underneath. Nothing here judges what a server does or whether its tool descriptions can be trusted.
+- It does not change any package manager setting. It reports which safeguards are missing and leaves applying them to `depsguard` or to you.
 - A dependency scanner tells you a known-bad version is present. It doesn't find bugs in your own code, misconfigurations or leaked secrets. Pair it with a code review, and keep secrets out of files your app can serve.
 
 ## Tests

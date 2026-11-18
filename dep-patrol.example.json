@@ -27,6 +27,7 @@
     "~/.claude.json",
     "~/.claude/plugins/cache/*/*/*/.mcp.json"
   ],
+  "safeguards": true,
   "urgency": {
     "critical_always": true,
     "high_on_exposed": true,

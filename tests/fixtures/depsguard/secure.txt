@@ -1,0 +1,30 @@
+  ╭─ v0.1.40 ────────────────────────────────────────────────────────╮
+  │      _                                          _                │
+  │   __| | ___ _ __  ___  __ _ _   _  __ _ _ __ __| |               │
+  │  / _` |/ _ \ '_ \/ __|/ _` | | | |/ _` | '__/ _` |               │
+  │ | (_| |  __/ |_) \__ \ (_| | |_| | (_| | | | (_| |               │
+  │  \__,_|\___| .__/|___/\__, |\__,_|\__,_|_|  \__,_|               │
+  │            |_|        |___/                                      │
+  ╰───────────────────────────────────────────────────── by [arnica] ╯
+
+
+[K  · Checking npm configuration...
+[K  · Checking pnpm configuration...
+[K  · Checking pnpm configuration...
+[K  · Checking bun configuration...
+[K  · Checking uv configuration...
+[K  · Checking pip configuration...
+[K  · Checking poetry configuration...
+[K  · Checking aube configuration...
+[K  · Checking yarn configuration...
+[K  · Done
+[K
+  Detected locations:
+
+  📦 npm v11.21.3   SECURE 
+     Config: ~/.npmrc
+     ✓ min-release-age — 7 · Delay new versions by 7 days
+     ✓ ignore-scripts — true · Block malicious install scripts
+
+  All 2 checks passed across 1 config
+

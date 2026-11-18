@@ -1,0 +1,50 @@
+  ╭─ v0.1.40 ────────────────────────────────────────────────────────╮
+  │      _                                          _                │
+  │   __| | ___ _ __  ___  __ _ _   _  __ _ _ __ __| |               │
+  │  / _` |/ _ \ '_ \/ __|/ _` | | | |/ _` | '__/ _` |               │
+  │ | (_| |  __/ |_) \__ \ (_| | |_| | (_| | | | (_| |               │
+  │  \__,_|\___| .__/|___/\__, |\__,_|\__,_|_|  \__,_|               │
+  │            |_|        |___/                                      │
+  ╰───────────────────────────────────────────────────── by [arnica] ╯
+
+
+[K  · Checking npm configuration...
+[K  · Checking pnpm configuration...
+[K  · Checking pnpm configuration...
+[K  · Checking bun configuration...
+[K  · Checking uv configuration...
+[K  · Checking pip configuration...
+[K  · Checking poetry configuration...
+[K  · Checking aube configuration...
+[K  · Checking yarn configuration...
+[K  · Done
+[K
+  Detected locations:
+
+  📦 npm v10.9.7 · ⚡ pnpm v11.2.2   ACTION NEEDED 
+     Config: ~/.npmrc
+     ℹ (npm) min-release-age — requires npm ≥ 11.10 (have 10.9.7) · Delay new versions by 7 days
+     ✗ (npm) ignore-scripts — not set · Block malicious install scripts
+
+  ⚡ pnpm v11.2.2   ACTION NEEDED 
+     Config: ~/Library/Preferences/pnpm/config.yaml
+     ✗ minimumReleaseAge — file missing · Delay new versions by 7 days
+     ✗ blockExoticSubdeps — file missing · Block untrusted transitive deps
+     ✗ trustPolicy — file missing · Block provenance downgrades
+     ✗ strictDepBuilds — file missing · Fail on unreviewed build scripts
+     ✗ ignoreScripts — file missing · Block malicious install scripts
+
+  🥟 bun v1.3.11   ACTION NEEDED 
+     Config: ~/.bunfig.toml
+     ✗ install.minimumReleaseAge — file missing · Delay new versions by 7 days
+
+  🐍 uv v0.11.21   ACTION NEEDED 
+     Config: ~/.config/uv/uv.toml
+     ✗ exclude-newer — file missing · Delay new versions by 7 days
+
+  🧶 yarn v1.22.22   WARNING 
+     Config: ~/.yarnrc.yml
+     ℹ npmMinimalAgeGate — requires yarn ≥ 4.10 (have 1.22.22) · Delay new versions by 7 days
+
+  7 files missing  1 not set  2 warnings  0 ok  (10 checks total across 5 configs)
+
