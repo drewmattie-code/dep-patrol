@@ -1,0 +1,404 @@
+{
+ "auditReportVersion": 2,
+ "vulnerabilities": {
+  "next": {
+   "name": "next",
+   "severity": "critical",
+   "isDirect": true,
+   "via": [
+    {
+     "source": 1112233,
+     "name": "next",
+     "dependency": "next",
+     "title": "Next.js: remote code execution in the image optimizer (fixture)",
+     "url": "https://github.com/advisories/GHSA-2464-fhr4-w9xw",
+     "severity": "critical",
+     "cwe": [
+      "CWE-20"
+     ],
+     "range": ">=16.0.0 <=16.4.0",
+     "cvss": {
+      "score": 9.8,
+      "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"
+     }
+    },
+    "postcss"
+   ],
+   "effects": [],
+   "range": "16.0.0 - 16.4.0",
+   "nodes": [
+    "node_modules/next"
+   ],
+   "fixAvailable": {
+    "name": "next",
+    "version": "16.4.6",
+    "isSemVerMajor": false
+   }
+  },
+  "postcss": {
+   "name": "postcss",
+   "severity": "high",
+   "isDirect": false,
+   "via": [
+    {
+     "source": 1112244,
+     "name": "postcss",
+     "dependency": "postcss",
+     "title": "PostCSS: file read through a source map comment (fixture)",
+     "url": "https://github.com/advisories/GHSA-7fh5-64p2-3v2j",
+     "severity": "high",
+     "cwe": [
+      "CWE-20"
+     ],
+     "range": "<=8.5.22",
+     "cvss": {
+      "score": 7.5,
+      "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N"
+     }
+    }
+   ],
+   "effects": [
+    "next"
+   ],
+   "range": "<=8.5.22",
+   "nodes": [
+    "node_modules/postcss"
+   ],
+   "fixAvailable": true
+  },
+  "vitest": {
+   "name": "vitest",
+   "severity": "high",
+   "isDirect": true,
+   "via": [
+    {
+     "source": 1112255,
+     "name": "vitest",
+     "dependency": "vitest",
+     "title": "Vitest: path traversal in the mock redirect (fixture)",
+     "url": "https://github.com/advisories/GHSA-82fw-gwwq-j7x9",
+     "severity": "high",
+     "cwe": [
+      "CWE-20"
+     ],
+     "range": ">=2.1.0 <4.1.11",
+     "cvss": {
+      "score": 7.1,
+      "vectorString": "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:H/I:N/A:N"
+     }
+    },
+    "picomatch"
+   ],
+   "effects": [],
+   "range": ">=2.1.0",
+   "nodes": [
+    "node_modules/vitest"
+   ],
+   "fixAvailable": true
+  },
+  "picomatch": {
+   "name": "picomatch",
+   "severity": "high",
+   "isDirect": true,
+   "via": [
+    {
+     "source": 1112266,
+     "name": "picomatch",
+     "dependency": "picomatch",
+     "title": "picomatch: ReDoS in brace expansion (fixture)",
+     "url": "https://github.com/advisories/GHSA-3v7f-55p6-f55p",
+     "severity": "high",
+     "cwe": [
+      "CWE-20"
+     ],
+     "range": "<2.3.2",
+     "cvss": {
+      "score": 7.5,
+      "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H"
+     }
+    },
+    {
+     "source": 1112277,
+     "name": "picomatch",
+     "dependency": "picomatch",
+     "title": "picomatch: method injection in POSIX classes (fixture)",
+     "url": "https://github.com/advisories/GHSA-c2c7-rcm5-vvqj",
+     "severity": "moderate",
+     "cwe": [
+      "CWE-20"
+     ],
+     "range": ">=4.0.0 <4.0.4",
+     "cvss": {
+      "score": 5.3,
+      "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:L/A:N"
+     }
+    }
+   ],
+   "effects": [
+    "vitest"
+   ],
+   "range": "<=2.3.1 || 4.0.0 - 4.0.3",
+   "nodes": [
+    "node_modules/picomatch",
+    "node_modules/vitest/node_modules/picomatch"
+   ],
+   "fixAvailable": true
+  },
+  "esbuild": {
+   "name": "esbuild",
+   "severity": "moderate",
+   "isDirect": false,
+   "via": [
+    {
+     "source": 1112288,
+     "name": "esbuild",
+     "dependency": "esbuild",
+     "title": "esbuild: dev server answers cross-origin requests (fixture)",
+     "url": "https://github.com/advisories/GHSA-67mh-4wv8-2f99",
+     "severity": "moderate",
+     "cwe": [
+      "CWE-20"
+     ],
+     "range": "<=0.24.2",
+     "cvss": {
+      "score": 5.3,
+      "vectorString": "CVSS:3.1/AV:N/AC:H/PR:N/UI:R/S:U/C:H/I:N/A:N"
+     }
+    }
+   ],
+   "effects": [],
+   "range": "<=0.24.2",
+   "nodes": [
+    "node_modules/esbuild"
+   ],
+   "fixAvailable": true
+  },
+  "undici": {
+   "name": "undici",
+   "severity": "critical",
+   "isDirect": true,
+   "via": [
+    {
+     "source": 1113000,
+     "name": "undici",
+     "dependency": "undici",
+     "title": "undici: fixture advisory 1",
+     "url": "https://github.com/advisories/GHSA-cccc-undi-ci00",
+     "severity": "moderate",
+     "cwe": [
+      "CWE-20"
+     ],
+     "range": "<6.21.2",
+     "cvss": {
+      "score": 5.0,
+      "vectorString": null
+     }
+    },
+    {
+     "source": 1113001,
+     "name": "undici",
+     "dependency": "undici",
+     "title": "undici: fixture advisory 2",
+     "url": "https://github.com/advisories/GHSA-ccc1-undi-ci01",
+     "severity": "moderate",
+     "cwe": [
+      "CWE-20"
+     ],
+     "range": "<6.21.2",
+     "cvss": {
+      "score": 5.0,
+      "vectorString": null
+     }
+    },
+    {
+     "source": 1113002,
+     "name": "undici",
+     "dependency": "undici",
+     "title": "undici: fixture advisory 3",
+     "url": "https://github.com/advisories/GHSA-ccc2-undi-ci02",
+     "severity": "moderate",
+     "cwe": [
+      "CWE-20"
+     ],
+     "range": "<6.21.2",
+     "cvss": {
+      "score": 5.0,
+      "vectorString": null
+     }
+    },
+    {
+     "source": 1113003,
+     "name": "undici",
+     "dependency": "undici",
+     "title": "undici: fixture advisory 4",
+     "url": "https://github.com/advisories/GHSA-ccc3-undi-ci03",
+     "severity": "moderate",
+     "cwe": [
+      "CWE-20"
+     ],
+     "range": "<6.21.2",
+     "cvss": {
+      "score": 5.0,
+      "vectorString": null
+     }
+    },
+    {
+     "source": 1113004,
+     "name": "undici",
+     "dependency": "undici",
+     "title": "undici: fixture advisory 5",
+     "url": "https://github.com/advisories/GHSA-ccc4-undi-ci04",
+     "severity": "moderate",
+     "cwe": [
+      "CWE-20"
+     ],
+     "range": "<6.21.2",
+     "cvss": {
+      "score": 5.0,
+      "vectorString": null
+     }
+    },
+    {
+     "source": 1113005,
+     "name": "undici",
+     "dependency": "undici",
+     "title": "undici: fixture advisory 6",
+     "url": "https://github.com/advisories/GHSA-ccc5-undi-ci05",
+     "severity": "moderate",
+     "cwe": [
+      "CWE-20"
+     ],
+     "range": "<6.21.2",
+     "cvss": {
+      "score": 5.0,
+      "vectorString": null
+     }
+    },
+    {
+     "source": 1113006,
+     "name": "undici",
+     "dependency": "undici",
+     "title": "undici: fixture advisory 7",
+     "url": "https://github.com/advisories/GHSA-ccc6-undi-ci06",
+     "severity": "moderate",
+     "cwe": [
+      "CWE-20"
+     ],
+     "range": "<6.21.2",
+     "cvss": {
+      "score": 5.0,
+      "vectorString": null
+     }
+    },
+    {
+     "source": 1113007,
+     "name": "undici",
+     "dependency": "undici",
+     "title": "undici: fixture advisory 8",
+     "url": "https://github.com/advisories/GHSA-ccc7-undi-ci07",
+     "severity": "moderate",
+     "cwe": [
+      "CWE-20"
+     ],
+     "range": "<6.21.2",
+     "cvss": {
+      "score": 5.0,
+      "vectorString": null
+     }
+    },
+    {
+     "source": 1113008,
+     "name": "undici",
+     "dependency": "undici",
+     "title": "undici: fixture advisory 9",
+     "url": "https://github.com/advisories/GHSA-ccc8-undi-ci08",
+     "severity": "moderate",
+     "cwe": [
+      "CWE-20"
+     ],
+     "range": "<6.21.2",
+     "cvss": {
+      "score": 5.0,
+      "vectorString": null
+     }
+    },
+    {
+     "source": 1113009,
+     "name": "undici",
+     "dependency": "undici",
+     "title": "undici: fixture advisory 10",
+     "url": "https://github.com/advisories/GHSA-ccc9-undi-ci09",
+     "severity": "moderate",
+     "cwe": [
+      "CWE-20"
+     ],
+     "range": "<6.21.2",
+     "cvss": {
+      "score": 5.0,
+      "vectorString": null
+     }
+    },
+    {
+     "source": 1113010,
+     "name": "undici",
+     "dependency": "undici",
+     "title": "undici: fixture advisory 11",
+     "url": "https://github.com/advisories/GHSA-cc1c-undi-ci10",
+     "severity": "moderate",
+     "cwe": [
+      "CWE-20"
+     ],
+     "range": "<6.21.2",
+     "cvss": {
+      "score": 5.0,
+      "vectorString": null
+     }
+    },
+    {
+     "source": 1113011,
+     "name": "undici",
+     "dependency": "undici",
+     "title": "undici: fixture advisory 12",
+     "url": "https://github.com/advisories/GHSA-cc11-undi-ci11",
+     "severity": "critical",
+     "cwe": [
+      "CWE-20"
+     ],
+     "range": "<6.21.2",
+     "cvss": {
+      "score": 9.1,
+      "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:N"
+     }
+    }
+   ],
+   "effects": [],
+   "range": "<6.21.2",
+   "nodes": [
+    "node_modules/undici"
+   ],
+   "fixAvailable": {
+    "name": "undici",
+    "version": "7.0.0",
+    "isSemVerMajor": true
+   }
+  }
+ },
+ "metadata": {
+  "vulnerabilities": {
+   "info": 0,
+   "low": 0,
+   "moderate": 1,
+   "high": 3,
+   "critical": 2,
+   "total": 6
+  },
+  "dependencies": {
+   "prod": 5,
+   "dev": 2,
+   "optional": 1,
+   "peer": 0,
+   "peerOptional": 0,
+   "total": 8
+  }
+ }
+}

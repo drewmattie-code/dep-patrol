@@ -1,0 +1,93 @@
+{
+ "advisories": {
+  "1112593": {
+   "findings": [
+    {
+     "version": "14.2.35",
+     "paths": [
+      ".>next"
+     ],
+     "dev": false,
+     "optional": false,
+     "bundled": false
+    }
+   ],
+   "id": 1112593,
+   "title": "Next.js: denial of service in the image optimizer (fixture)",
+   "module_name": "next",
+   "vulnerable_versions": ">=10.0.0 <15.5.10",
+   "patched_versions": ">=15.5.10",
+   "severity": "moderate",
+   "cwe": "CWE-400",
+   "github_advisory_id": "GHSA-9g9p-9gw9-jx7f",
+   "url": "https://github.com/advisories/GHSA-9g9p-9gw9-jx7f"
+  },
+  "1112601": {
+   "findings": [
+    {
+     "version": "0.21.0",
+     "paths": [
+      ".>vite>esbuild"
+     ],
+     "dev": true,
+     "optional": false,
+     "bundled": false
+    }
+   ],
+   "id": 1112601,
+   "title": "esbuild: dev server answers cross-origin requests (fixture)",
+   "module_name": "esbuild",
+   "vulnerable_versions": "<=0.24.2",
+   "patched_versions": ">=0.25.0",
+   "severity": "moderate",
+   "cwe": "CWE-346",
+   "github_advisory_id": "GHSA-67mh-4wv8-2f99",
+   "url": "https://github.com/advisories/GHSA-67mh-4wv8-2f99"
+  },
+  "1112602": {
+   "findings": [
+    {
+     "version": "8.17.0",
+     "paths": [
+      ".>vitest>ws"
+     ],
+     "dev": true,
+     "optional": false,
+     "bundled": false
+    },
+    {
+     "version": "8.17.0",
+     "paths": [
+      ".>express-ws>ws",
+      "packages/api>ws"
+     ],
+     "dev": false,
+     "optional": false,
+     "bundled": false
+    }
+   ],
+   "id": 1112602,
+   "title": "ws: crash on a request with many headers (fixture)",
+   "module_name": "ws",
+   "vulnerable_versions": ">=8.0.0 <8.17.1",
+   "patched_versions": ">=8.17.1",
+   "severity": "high",
+   "cwe": "CWE-476",
+   "github_advisory_id": "GHSA-3h5v-q93c-6h6q",
+   "url": "https://github.com/advisories/GHSA-3h5v-q93c-6h6q"
+  }
+ },
+ "metadata": {
+  "vulnerabilities": {
+   "info": 0,
+   "low": 0,
+   "moderate": 2,
+   "high": 1,
+   "critical": 0
+  },
+  "dependencies": 40,
+  "devDependencies": 12,
+  "optionalDependencies": 1,
+  "totalDependencies": 53
+ }
+}

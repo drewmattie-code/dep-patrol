@@ -1,0 +1,378 @@
+{
+ "results": [
+  {
+   "source": {
+    "path": "/work/repo/Cargo.lock",
+    "type": "lockfile"
+   },
+   "packages": [
+    {
+     "package": {
+      "name": "tokio",
+      "version": "1.30.0",
+      "ecosystem": "crates.io",
+      "purl": "pkg:cargo/tokio@1.30.0"
+     },
+     "groups": [
+      {
+       "ids": [
+        "RUSTSEC-2026-0194"
+       ],
+       "aliases": [
+        "RUSTSEC-2026-0194"
+       ],
+       "max_severity": "7.5"
+      }
+     ],
+     "vulnerabilities": [
+      {
+       "id": "RUSTSEC-2026-0194",
+       "summary": "tokio: fixture denial of service",
+       "modified": "2026-10-01T00:00:00Z",
+       "published": "2026-09-01T00:00:00Z",
+       "schema_version": "1.7.3",
+       "details": "fixture",
+       "references": [],
+       "affected": [
+        {
+         "package": {
+          "name": "tokio",
+          "ecosystem": "crates.io"
+         },
+         "ranges": [
+          {
+           "type": "SEMVER",
+           "events": [
+            {
+             "introduced": "0"
+            },
+            {
+             "fixed": "1.38.2"
+            }
+           ]
+          }
+         ],
+         "database_specific": {
+          "categories": [],
+          "cvss": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H",
+          "informational": null
+         }
+        }
+       ],
+       "database_specific": {
+        "license": "CC0-1.0"
+       },
+       "severity": [
+        {
+         "type": "CVSS_V3",
+         "score": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H"
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "package": {
+      "name": "paste",
+      "version": "1.0.15",
+      "ecosystem": "crates.io",
+      "purl": "pkg:cargo/paste@1.0.15"
+     },
+     "groups": [
+      {
+       "ids": [
+        "RUSTSEC-2024-0436"
+       ],
+       "aliases": [
+        "RUSTSEC-2024-0436"
+       ],
+       "max_severity": ""
+      }
+     ],
+     "vulnerabilities": [
+      {
+       "id": "RUSTSEC-2024-0436",
+       "summary": "paste: no longer maintained (fixture)",
+       "modified": "2026-10-01T00:00:00Z",
+       "published": "2026-09-01T00:00:00Z",
+       "schema_version": "1.7.3",
+       "details": "fixture",
+       "references": [],
+       "affected": [
+        {
+         "package": {
+          "name": "paste",
+          "ecosystem": "crates.io"
+         },
+         "ranges": [
+          {
+           "type": "SEMVER",
+           "events": [
+            {
+             "introduced": "0"
+            }
+           ]
+          }
+         ],
+         "database_specific": {
+          "categories": [],
+          "cvss": null,
+          "informational": "unmaintained"
+         }
+        }
+       ],
+       "database_specific": {
+        "license": "CC0-1.0"
+       }
+      }
+     ]
+    },
+    {
+     "package": {
+      "name": "ring",
+      "version": "0.17.8",
+      "ecosystem": "crates.io",
+      "purl": "pkg:cargo/ring@0.17.8"
+     },
+     "groups": [
+      {
+       "ids": [
+        "RUSTSEC-2026-0293"
+       ],
+       "aliases": [
+        "RUSTSEC-2026-0293"
+       ],
+       "max_severity": ""
+      }
+     ],
+     "vulnerabilities": [
+      {
+       "id": "RUSTSEC-2026-0293",
+       "summary": "ring: fixture memory corruption with no rating",
+       "modified": "2026-10-01T00:00:00Z",
+       "published": "2026-09-01T00:00:00Z",
+       "schema_version": "1.7.3",
+       "details": "fixture",
+       "references": [],
+       "affected": [
+        {
+         "package": {
+          "name": "ring",
+          "ecosystem": "crates.io"
+         },
+         "ranges": [
+          {
+           "type": "SEMVER",
+           "events": [
+            {
+             "introduced": "0"
+            },
+            {
+             "fixed": "0.17.12"
+            }
+           ]
+          }
+         ],
+         "database_specific": {
+          "categories": [],
+          "cvss": null,
+          "informational": null
+         }
+        }
+       ],
+       "database_specific": {
+        "license": "CC0-1.0"
+       }
+      }
+     ]
+    },
+    {
+     "package": {
+      "name": "rsa",
+      "version": "0.9.6",
+      "ecosystem": "crates.io",
+      "purl": "pkg:cargo/rsa@0.9.6"
+     },
+     "groups": [
+      {
+       "ids": [
+        "GHSA-c38w-74pg-36hr",
+        "RUSTSEC-2023-0071"
+       ],
+       "aliases": [
+        "CVE-2023-49092",
+        "GHSA-c38w-74pg-36hr",
+        "RUSTSEC-2023-0071"
+       ],
+       "max_severity": "5.9"
+      }
+     ],
+     "vulnerabilities": [
+      {
+       "id": "GHSA-c38w-74pg-36hr",
+       "summary": "rsa: fixture timing side channel",
+       "modified": "2026-10-01T00:00:00Z",
+       "published": "2026-09-01T00:00:00Z",
+       "schema_version": "1.7.3",
+       "details": "fixture",
+       "references": [],
+       "affected": [
+        {
+         "package": {
+          "name": "rsa",
+          "ecosystem": "crates.io"
+         },
+         "ranges": [
+          {
+           "type": "SEMVER",
+           "events": [
+            {
+             "introduced": "0"
+            }
+           ]
+          }
+         ],
+         "database_specific": {
+          "categories": [],
+          "cvss": "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:H/I:N/A:N",
+          "informational": null
+         }
+        }
+       ],
+       "database_specific": {
+        "severity": "MODERATE",
+        "github_reviewed": true
+       },
+       "aliases": [
+        "CVE-2023-49092"
+       ],
+       "severity": [
+        {
+         "type": "CVSS_V3",
+         "score": "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:H/I:N/A:N"
+        }
+       ]
+      },
+      {
+       "id": "RUSTSEC-2023-0071",
+       "summary": "Marvin Attack: fixture timing side channel",
+       "modified": "2026-10-01T00:00:00Z",
+       "published": "2026-09-01T00:00:00Z",
+       "schema_version": "1.7.3",
+       "details": "fixture",
+       "references": [],
+       "affected": [
+        {
+         "package": {
+          "name": "rsa",
+          "ecosystem": "crates.io"
+         },
+         "ranges": [
+          {
+           "type": "SEMVER",
+           "events": [
+            {
+             "introduced": "0"
+            }
+           ]
+          }
+         ],
+         "database_specific": {
+          "categories": [],
+          "cvss": "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:H/I:N/A:N",
+          "informational": null
+         }
+        }
+       ],
+       "database_specific": {
+        "license": "CC0-1.0"
+       },
+       "aliases": [
+        "CVE-2023-49092",
+        "GHSA-c38w-74pg-36hr"
+       ],
+       "severity": [
+        {
+         "type": "CVSS_V3",
+         "score": "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:H/I:N/A:N"
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "package": {
+      "name": "sqlite",
+      "version": "0.36.0",
+      "ecosystem": "crates.io",
+      "purl": "pkg:cargo/sqlite@0.36.0"
+     },
+     "groups": [
+      {
+       "ids": [
+        "RUSTSEC-2026-0459"
+       ],
+       "aliases": [
+        "CVE-2026-119375",
+        "RUSTSEC-2026-0459"
+       ],
+       "max_severity": "8.4"
+      }
+     ],
+     "vulnerabilities": [
+      {
+       "id": "RUSTSEC-2026-0459",
+       "summary": "sqlite: fixture memory exposure rated only with CVSS 4",
+       "modified": "2026-10-01T00:00:00Z",
+       "published": "2026-09-01T00:00:00Z",
+       "schema_version": "1.7.3",
+       "details": "fixture",
+       "references": [],
+       "affected": [
+        {
+         "package": {
+          "name": "sqlite",
+          "ecosystem": "crates.io"
+         },
+         "ranges": [
+          {
+           "type": "SEMVER",
+           "events": [
+            {
+             "introduced": "0"
+            }
+           ]
+          }
+         ],
+         "database_specific": {
+          "categories": [],
+          "cvss": "CVSS:4.0/AV:L/AC:L/AT:N/PR:N/UI:P/VC:H/VI:N/VA:N/SC:N/SI:N/SA:N",
+          "informational": null
+         }
+        }
+       ],
+       "database_specific": {
+        "license": "CC0-1.0"
+       },
+       "aliases": [
+        "CVE-2026-119375"
+       ],
+       "severity": [
+        {
+         "type": "CVSS_V4",
+         "score": "CVSS:4.0/AV:L/AC:L/AT:N/PR:N/UI:P/VC:H/VI:N/VA:N/SC:N/SI:N/SA:N"
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  }
+ ],
+ "experimental_config": {
+  "licenses": {
+   "summary": false,
+   "allowlist": null
+  }
+ }
+}

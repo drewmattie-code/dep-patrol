@@ -1,0 +1,68 @@
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  unit:
+    name: unit tests (${{ matrix.os }}, Python ${{ matrix.python }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest]
+        python: ["3.11", "3.13"]
+        include:
+          - os: macos-latest
+            python: "3.13"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python }}
+      - run: python -m unittest discover -s tests -v
+  system-python:
+    # The Python a Mac already has (3.9 from the Xcode tools) is what launchd and ssh sessions often get.
+    name: unit tests (macOS system Python)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: /usr/bin/python3 --version && /usr/bin/python3 -m unittest discover -s tests -v
+  live:
+    # The Action itself, on fixture repositories with known answers, over the real npm registry and OSV.
+    name: the Action on fixture repositories
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Build the fixtures
+        run: python3 tests/live/make.py "$RUNNER_TEMP/live"
+      - name: A repository with known advisories
+        id: vulnerable
+        uses: ./
+        continue-on-error: true
+        with:
+          path: ${{ runner.temp }}/live/vulnerable
+          upload-sarif: "false"
+      - run: python3 tests/live/check.py vulnerable "${{ steps.vulnerable.outputs.exit-code }}" "${{ steps.vulnerable.outputs.report-dir }}" "$RUNNER_TEMP/live/vulnerable"
+      - name: A repository with nothing to find
+        id: clean
+        uses: ./
+        with:
+          path: ${{ runner.temp }}/live/clean
+          upload-sarif: "false"
+      - run: python3 tests/live/check.py clean "${{ steps.clean.outputs.exit-code }}" "${{ steps.clean.outputs.report-dir }}" "$RUNNER_TEMP/live/clean"
+      - name: A repository whose lockfile cannot be audited
+        id: broken
+        uses: ./
+        continue-on-error: true
+        with:
+          path: ${{ runner.temp }}/live/broken
+          upload-sarif: "false"
+      - run: python3 tests/live/check.py broken "${{ steps.broken.outputs.exit-code }}" "${{ steps.broken.outputs.report-dir }}" "$RUNNER_TEMP/live/broken"
+      - name: The broken and vulnerable runs must have failed their step
+        run: |
+          test "${{ steps.vulnerable.outcome }}" = "failure"
+          test "${{ steps.broken.outcome }}" = "failure"
+          test "${{ steps.clean.outcome }}" = "success"

@@ -1,0 +1,13 @@
+[tool.poetry]
+name = "demo"
+version = "0.1.0"
+description = "fixture"
+authors = []
+
+[tool.poetry.dependencies]
+python = "^3.11"
+Jinja2 = "^3.1"
+internal-lib = { git = "https://example.com/internal-lib.git", branch = "main" }
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.0"

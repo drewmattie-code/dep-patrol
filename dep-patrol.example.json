@@ -4,6 +4,7 @@
     "~/code"
   ],
   "max_depth": 3,
+  "include": [],
   "exclude": [
     "*/archive/*",
     "*-old",
@@ -14,20 +15,28 @@
     "marketing-site/web",
     "api-server"
   ],
-  "notify": "osascript -e \"display notification \\\"$DEP_PATROL_SUMMARY\\\" with title \\\"dep-patrol\\\"\"",
-  "out": "~/.dep-patrol/reports",
-  "include": [],
+  "deployed": {
+    "my-saas-app": {
+      "ref": "origin/production"
+    },
+    "api-server": {
+      "command": "curl -fsS https://api.example.com/healthz | python3 -c 'import json,sys; print(json.load(sys.stdin)[\"version\"])'"
+    }
+  },
   "urgency": {
     "critical_always": true,
     "high_on_exposed": true,
-    "moderate_on_exposed": false
+    "moderate_on_exposed": false,
+    "unknown_on_exposed": false
   },
   "ignore": [
     {
-      "match": "GHSA-xxxx-xxxx-xxxx",
-      "reason": "build-time only, not shipped",
-      "project": "my-saas-app"
+      "advisory": "GHSA-xxxx-xxxx-xxxx",
+      "project": "my-saas-app",
+      "reason": "build-time only, not shipped"
     }
   ],
+  "notify": "osascript -e \"display notification \\\"$DEP_PATROL_SUMMARY\\\" with title \\\"dep-patrol\\\"\"",
+  "out": "~/.dep-patrol/reports",
   "osv_cache_days": 7
 }

@@ -1,0 +1,93 @@
+name: dep-patrol
+description: >-
+  Scan a repository's dependencies for known vulnerabilities. Every lockfile is accounted for,
+  and a scan that could not run fails the job instead of passing it.
+author: drewmattie-code
+branding:
+  icon: shield
+  color: blue
+inputs:
+  path:
+    description: Folder to scan. The whole repository by default.
+    default: "."
+  config:
+    description: Optional dep-patrol config file (urgency rules, ignore rules, excludes).
+    default: ""
+  strict:
+    description: Also fail when a manifest was left unscanned or only partly scanned.
+    default: "true"
+  upload-sarif:
+    description: "Upload the findings to GitHub code scanning. The job needs the permission security-events: write."
+    default: "true"
+  category:
+    description: Code scanning category for the upload.
+    default: dep-patrol
+  install-osv-scanner:
+    description: Install osv-scanner (pinned version, checksum verified) so Yarn, Bun, Cargo and Go lockfiles are scanned.
+    default: "true"
+outputs:
+  exit-code:
+    description: "0 every manifest scanned and nothing urgent, 1 something needs action, 2 the scan is incomplete"
+    value: ${{ steps.scan.outputs.exit-code }}
+  report-dir:
+    description: Folder that holds report.md, report.json and results.sarif
+    value: ${{ steps.scan.outputs.report-dir }}
+runs:
+  using: composite
+  steps:
+    - name: Install osv-scanner
+      if: inputs.install-osv-scanner == 'true'
+      shell: bash
+      run: |
+        if command -v osv-scanner >/dev/null; then echo "osv-scanner is already installed"; exit 0; fi
+        version=v2.7.1
+        case "$(uname -s)-$(uname -m)" in
+          Linux-x86_64)  asset=osv-scanner_linux_amd64;  sum=fb7dab19a8bd9bbe5c3189f09d4b7ee1820c9553a23bac202648a56efd2f6ee8 ;;
+          Linux-aarch64) asset=osv-scanner_linux_arm64;  sum=983d22fbad9724514e3fcc6acc83b5fa64c5ffa6b0d9f510028f22c1b223ff81 ;;
+          Darwin-arm64)  asset=osv-scanner_darwin_arm64; sum=b22c02877a811c8f78956e8643efa554932b7378f590d13f8e97d4e9448a29f3 ;;
+          *) echo "::warning::dep-patrol has no pinned osv-scanner build for this runner. Yarn, Bun, Cargo and Go lockfiles will be reported as not scanned."; exit 0 ;;
+        esac
+        bin="$RUNNER_TEMP/dep-patrol-bin"
+        mkdir -p "$bin"
+        curl -fsSL -o "$bin/osv-scanner" "https://github.com/google/osv-scanner/releases/download/$version/$asset"
+        got=$( (sha256sum "$bin/osv-scanner" 2>/dev/null || shasum -a 256 "$bin/osv-scanner") | cut -d' ' -f1)
+        if [ "$got" != "$sum" ]; then echo "::error::osv-scanner $version checksum mismatch: got $got"; rm -f "$bin/osv-scanner"; exit 1; fi
+        chmod +x "$bin/osv-scanner"
+        echo "$bin" >> "$GITHUB_PATH"
+    - name: Scan
+      id: scan
+      shell: bash
+      env:
+        DP_PATH: ${{ inputs.path }}
+        DP_CONFIG: ${{ inputs.config }}
+        DP_STRICT: ${{ inputs.strict }}
+      run: |
+        out=$(mktemp -d "$RUNNER_TEMP/dep-patrol-report-XXXXXX")
+        args=(--repo "$DP_PATH" --out "$out" --sarif "$out/results.sarif")
+        if [ "$DP_STRICT" = "true" ]; then args+=(--strict); fi
+        if [ -n "$DP_CONFIG" ]; then args+=(--config "$DP_CONFIG"); fi
+        set +e
+        python3 "$GITHUB_ACTION_PATH/scripts/scan.py" "${args[@]}"
+        rc=$?
+        set -e
+        echo "exit-code=$rc" >> "$GITHUB_OUTPUT"
+        echo "report-dir=$out" >> "$GITHUB_OUTPUT"
+        if [ -f "$out/results.sarif" ]; then echo "sarif=$out/results.sarif" >> "$GITHUB_OUTPUT"; fi
+        report=$(find "$out" -name report.md | head -1)
+        if [ -n "$report" ]; then head -c 900000 "$report" >> "$GITHUB_STEP_SUMMARY"; fi
+    - name: Upload to code scanning
+      if: inputs.upload-sarif == 'true' && steps.scan.outputs.sarif != ''
+      uses: github/codeql-action/upload-sarif@v4
+      with:
+        sarif_file: ${{ steps.scan.outputs.sarif }}
+        category: ${{ inputs.category }}
+    - name: Result
+      shell: bash
+      env:
+        DP_RC: ${{ steps.scan.outputs.exit-code }}
+      run: |
+        case "$DP_RC" in
+          0) echo "dep-patrol: every manifest was scanned and nothing is urgent" ;;
+          1) echo "::error::dep-patrol: dependencies need action. See the job summary."; exit 1 ;;
+          *) echo "::error::dep-patrol: the scan is incomplete, so a pass cannot be claimed. See the job summary."; exit 2 ;;
+        esac
