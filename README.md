@@ -30,8 +30,8 @@ It is built around one rule: **a scan that did not run is never reported as clea
 ## First run in five minutes
 
 ```bash
-git clone --branch v3.0.0 https://github.com/drewmattie-code/dep-patrol ~/.claude/skills/dep-patrol
-cd ~/.claude/skills/dep-patrol
+git clone https://github.com/drewmattie-code/dep-patrol ~/.claude/skills/dep-patrol
+cd ~/.claude/skills/dep-patrol                        # to pin a release: git checkout v3.0.0
 python3 scripts/scan.py --roots ~/code --dry-run     # lists what it found, no network
 python3 scripts/scan.py --roots ~/code               # the real thing
 ```
