@@ -1,0 +1,29 @@
+{
+  "numStartups": 12,
+  "mcpServers": {
+    "browser": {
+      "command": "npx",
+      "args": ["-y", "@playwright/mcp@latest", "--sandbox"]
+    },
+    "search": {
+      "type": "http",
+      "url": "https://mcp.example.com/v1/mcp?key=SECRET-TOKEN-123",
+      "headers": {"Authorization": "Bearer SECRET-HEADER-456"}
+    }
+  },
+  "projects": {
+    "/home/dev/code/site": {
+      "allowedTools": [],
+      "mcpServers": {
+        "notes": {
+          "command": "uvx",
+          "args": ["mcp-obsidian"],
+          "env": {"OBSIDIAN_API_KEY": "SECRET-ENV-789"}
+        }
+      }
+    },
+    "/home/dev/code/other": {
+      "mcpServers": {}
+    }
+  }
+}

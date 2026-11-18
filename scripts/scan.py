@@ -9,6 +9,7 @@ Scanners, using what a dev machine already has:
   * pnpm (pnpm-lock.yaml): `pnpm audit --json`.
   * Python (requirements*.txt, poetry.lock, uv.lock): the OSV.dev API, with a local cache.
   * Yarn, Bun, Cargo, Go: `osv-scanner` when it is on PATH; otherwise listed as not scanned, with the command.
+  * Agent configs (the files named under `agent_configs`): the package each MCP server launch fetches, at OSV.
 
 usage:
   scan.py --config dep-patrol.json             # scan every root, write the report, print a summary
@@ -21,8 +22,8 @@ usage:
 Exit code: 0 every manifest scanned and nothing urgent, 1 something to fix,
            2 the scan is incomplete (a manifest failed, a root is missing; with --strict also anything not scanned).
 """
-import argparse, datetime as dt, fnmatch, hashlib, io, json, math, os, re, shutil, subprocess, sys, tarfile, tempfile, time
-import urllib.error, urllib.request
+import argparse, datetime as dt, fnmatch, glob, hashlib, io, json, math, os, re, shutil, subprocess, sys, tarfile, tempfile, time
+import urllib.error, urllib.parse, urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -34,7 +35,7 @@ except ImportError:  # pragma: no cover
     except ImportError:
         tomllib = None
 
-VERSION = "3.0.1"
+VERSION = "3.1.0"
 SCHEMA = 3
 SKIP_DIRS = {"node_modules", ".git", ".next", "dist", "build", "out", ".venv", "venv", "env", "__pycache__",
              ".turbo", ".open-next", ".wrangler", ".cache", "coverage", "vendor", "target", ".worktrees", "worktrees"}
@@ -217,9 +218,13 @@ def tool_version(cmd):
         return None
 
 
-def outcome(status, detail=None, findings=None, packages=None):
-    """What happened to one manifest. status: scanned | partial | unscanned | failed."""
-    return {"status": status, "detail": detail, "findings": findings or [], "packages": packages}
+def outcome(status, detail=None, findings=None, packages=None, servers=None):
+    """What happened to one manifest. status: scanned | partial | unscanned | failed.
+    An agent config also carries `servers`: every MCP server it declares and how far each was checked."""
+    r = {"status": status, "detail": detail, "findings": findings or [], "packages": packages}
+    if servers is not None:
+        r["servers"] = servers
+    return r
 
 
 def _norm(name):
@@ -688,6 +693,61 @@ def osv_vuln(vid, cache_days):
     return v
 
 
+class OsvFailed(Exception):
+    """OSV could not be asked, or its answer cannot be trusted as complete. The message is the manifest's detail."""
+
+
+def osv_advisories(pkgs, cache_days, ecosystem="PyPI"):
+    """Ask OSV about each {name, version} package (in its own `ecosystem`, or the default). Returns one list of
+    advisory groups per package, in the same order, and how many advisories had no details to fetch."""
+    def query(p, **more):
+        return dict({"package": {"name": p["name"], "ecosystem": p.get("ecosystem") or ecosystem}, "version": p["version"]}, **more)
+    results = []
+    try:
+        for i in range(0, len(pkgs), 500):
+            chunk = pkgs[i:i + 500]
+            res = http_json(f"{OSV_API}/querybatch", {"queries": [query(p) for p in chunk]})
+            got = res.get("results") if isinstance(res, dict) else None
+            if not isinstance(got, list) or len(got) != len(chunk):
+                raise OsvFailed(f"OSV answered for {len(got) if isinstance(got, list) else 0} of {len(chunk)} "
+                                f"packages: {_tail(json.dumps(res), n=120)}")
+            results += [r if isinstance(r, dict) else {} for r in got]
+        # a package with very many advisories comes back in pages: follow them, or the tail is silently lost
+        paged = [(i, r["next_page_token"]) for i, r in enumerate(results) if r.get("next_page_token")]
+        for _ in range(25):
+            if not paged:
+                break
+            res = http_json(f"{OSV_API}/querybatch", {"queries": [query(pkgs[i], page_token=tok) for i, tok in paged]})
+            got = res.get("results") if isinstance(res, dict) else None
+            if not isinstance(got, list) or len(got) != len(paged):
+                raise OsvFailed("OSV gave an unusable answer while paging: " + _tail(json.dumps(res), n=120))
+            nxt = []
+            for (i, _tok), r in zip(paged, got):
+                r = r if isinstance(r, dict) else {}
+                results[i].setdefault("vulns", []).extend(r.get("vulns") or [])
+                if r.get("next_page_token"):
+                    nxt.append((i, r["next_page_token"]))
+            paged = nxt
+        if paged:
+            raise OsvFailed("OSV kept paging without end")
+    except OsvFailed:
+        raise
+    except Exception as e:
+        raise OsvFailed(f"OSV unreachable: {e}")
+    hits = [[v["id"] for v in res.get("vulns") or [] if v.get("id")] for res in results]
+
+    def detail(vid):
+        try:
+            return osv_vuln(vid, cache_days)
+        except Exception:
+            return None   # keep the advisory, with unknown severity, rather than drop it
+    wanted = sorted({vid for ids in hits for vid in ids})
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        details = dict(zip(wanted, pool.map(detail, wanted)))
+    return ([group_advisories([details[vid] or {"id": vid} for vid in ids]) for ids in hits],
+            sum(1 for v in details.values() if v is None))
+
+
 def python_scan(proj, file, cache_days=7):
     try:
         pkgs, info = python_packages(proj, file)
@@ -702,57 +762,14 @@ def python_scan(proj, file, cache_days=7):
         notes.append(f"{len(info['skipped'])} not from a package index ({', '.join(info['skipped'][:4])})")
     if not pkgs:
         return outcome("unscanned", "; ".join(["nothing pinned to an exact version"] + notes), packages=0)
-    results = []
     try:
-        for i in range(0, len(pkgs), 500):
-            chunk = pkgs[i:i + 500]
-            res = http_json(f"{OSV_API}/querybatch", {"queries": [
-                {"package": {"name": p["name"], "ecosystem": "PyPI"}, "version": p["version"]} for p in chunk]})
-            got = res.get("results") if isinstance(res, dict) else None
-            if not isinstance(got, list) or len(got) != len(chunk):
-                return outcome("failed", f"OSV answered for {len(got) if isinstance(got, list) else 0} of {len(chunk)} "
-                                         f"packages: {_tail(json.dumps(res), n=120)}")
-            results += [r if isinstance(r, dict) else {} for r in got]
-        # a package with very many advisories comes back in pages: follow them, or the tail is silently lost
-        paged = [(i, r["next_page_token"]) for i, r in enumerate(results) if r.get("next_page_token")]
-        for _ in range(25):
-            if not paged:
-                break
-            res = http_json(f"{OSV_API}/querybatch", {"queries": [
-                {"package": {"name": pkgs[i]["name"], "ecosystem": "PyPI"}, "version": pkgs[i]["version"], "page_token": tok}
-                for i, tok in paged]})
-            got = res.get("results") if isinstance(res, dict) else None
-            if not isinstance(got, list) or len(got) != len(paged):
-                return outcome("failed", "OSV gave an unusable answer while paging: " + _tail(json.dumps(res), n=120))
-            nxt = []
-            for (i, _tok), r in zip(paged, got):
-                r = r if isinstance(r, dict) else {}
-                results[i].setdefault("vulns", []).extend(r.get("vulns") or [])
-                if r.get("next_page_token"):
-                    nxt.append((i, r["next_page_token"]))
-            paged = nxt
-        if paged:
-            return outcome("failed", "OSV kept paging without end")
-    except Exception as e:
-        return outcome("failed", f"OSV unreachable: {e}")
-    hits = [[v["id"] for v in res.get("vulns") or [] if v.get("id")] for res in results]
-
-    def detail(vid):
-        try:
-            return osv_vuln(vid, cache_days)
-        except Exception:
-            return None   # keep the advisory, with unknown severity, rather than drop it
-    wanted = sorted({vid for ids in hits for vid in ids})
-    with ThreadPoolExecutor(max_workers=8) as pool:
-        details = dict(zip(wanted, pool.map(detail, wanted)))
-    missing = sum(1 for v in details.values() if v is None)
-    findings = []
-    for p, ids in zip(pkgs, hits):
-        for g in group_advisories([details[vid] or {"id": vid} for vid in ids]):
-            findings.append(new_finding(g["id"], p["name"], "PyPI", file, g["severity"], p["scope"], p["direct"],
-                                        [p["version"]], "", _osv_fix(g["records"], p["name"], "PyPI", p["version"]),
-                                        g["title"], g["url"], aliases=g["aliases"], score=g["score"],
-                                        source=g["severity_source"]))
+        groups, missing = osv_advisories(pkgs, cache_days)
+    except OsvFailed as e:
+        return outcome("failed", str(e))
+    findings = [new_finding(g["id"], p["name"], "PyPI", file, g["severity"], p["scope"], p["direct"], [p["version"]], "",
+                            _osv_fix(g["records"], p["name"], "PyPI", p["version"]), g["title"], g["url"],
+                            aliases=g["aliases"], score=g["score"], source=g["severity_source"])
+                for p, gs in zip(pkgs, groups) for g in gs]
     if missing:
         notes.append(f"details unavailable for {missing} advisories, shown as unknown severity")
     return outcome("partial" if info["unpinned"] else "scanned", "; ".join(notes) or None, findings, len(pkgs))
@@ -807,13 +824,221 @@ def osv_scanner_scan(proj, file):
     return outcome("scanned", None, osv_scanner_parse(data, file))
 
 
+# ------------------------------------------------------------------ agent configs (MCP servers)
+AGENT_PROJECT, AGENT_SCOPE = "agent-tools", "agent-tool"
+# flags of the package runners that take a value, so the word after them is not the package
+_RUNNER_VALUE_FLAGS = {
+    "npm": {"-c", "--call", "--registry", "--cache", "--prefix", "--userconfig", "-w", "--workspace"},
+    "PyPI": {"-p", "--python", "-c", "--constraint", "--constraints", "--overrides", "-i", "--index-url", "--index",
+             "--extra-index-url", "--default-index", "-f", "--find-links", "--directory", "--project", "--cache-dir",
+             "--config-file", "--env-file", "--exclude-newer", "--resolution", "--prerelease", "--python-preference",
+             "--with-requirements", "--with-editable", "--pip-args", "--index-strategy", "--keyring-provider", "--color"}}
+# flags that name a package: "main" replaces the first plain word (which is then a command), "extra" adds to it
+_RUNNER_PACKAGE_FLAGS = {"npm": {"-p": "main", "--package": "main"},
+                         "PyPI": {"--from": "main", "--spec": "main", "--with": "extra"}}
+_RUNNERS = (("npm", ["exec"], "npm"), ("npm", ["x"], "npm"), ("pnpm", ["dlx"], "npm"), ("yarn", ["dlx"], "npm"),
+            ("bun", ["x"], "npm"), ("uv", ["tool", "run"], "PyPI"), ("pipx", ["run"], "PyPI"))
+_NPM_NAME = re.compile(r"^(@[a-z0-9~-][a-z0-9._~-]*/)?[a-z0-9~-][a-z0-9._~-]*$", re.I)
+_PY_SPEC = re.compile(r"^([A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?)(\[[^\]]*\])?\s*(.*)$")
+_PY_EXACT = re.compile(r"^v?\d+(?:\.\d+)*(?:[-_.]?(?:a|b|c|rc|alpha|beta|pre|preview|post|rev|r|dev)[-_.]?\d*)*(?:\+[a-z0-9.]+)?$", re.I)
+_NOT_INDEXED = ("git+", "hg+", "svn+", "bzr+", "github:", "gitlab:", "bitbucket:", "gist:", "file:", "link:",
+                "workspace:", "npm:", "jsr:", ".", "/", "~", "$")
+
+
+def _read_spec(ecosystem, spec):
+    """One package spec from a launch line -> {ecosystem, name, version, loose}. `version` is set for an exact pin;
+    otherwise `loose` holds the tag or range ("" when there is none). None when the spec does not name a package
+    on the public index (a git URL, a path, a tarball, the GitHub user/repo shorthand)."""
+    spec = spec.strip().strip("'\"")
+    if not spec or "://" in spec or spec.startswith(_NOT_INDEXED) or spec.endswith((".tgz", ".tar.gz", ".whl", ".zip")):
+        return None
+    if ecosystem == "npm":
+        at = spec.rfind("@")
+        name, ver = (spec[:at], spec[at + 1:]) if at > 0 else (spec, "")
+        if not _NPM_NAME.match(name):
+            return None
+        exact = _semver_key(ver) is not None   # npm reads anything shorter (1.2) as a range
+        return {"ecosystem": "npm", "name": name, "version": ver.lstrip("v") if exact else None, "loose": None if exact else ver}
+    m = _PY_SPEC.match(spec)
+    if not m:
+        return None
+    rest = m.group(3).strip()
+    at = rest.startswith("@")
+    pin = rest[1:].strip() if at else rest[2:].strip() if rest.startswith("==") and not rest.startswith("===") else ""
+    exact = bool(_PY_EXACT.match(pin))
+    return {"ecosystem": "PyPI", "name": m.group(1), "version": pin if exact else None,
+            "loose": None if exact else pin if at else rest}
+
+
+def launch_packages(command, args):
+    """What one server's launch line asks a package runner to fetch: ([{ecosystem, name, version, loose}], note).
+    `note` says why the line, or part of it, was not read as packages from a public index (a local command,
+    a container, a git URL). It never repeats the arguments, which can hold tokens."""
+    words = [str(a) for a in args] if isinstance(args, list) else []
+    shown = os.path.basename(str(command or ""))
+    base = shown.lower()
+    eco = "npm" if base in ("npx", "bunx", "pnpx") else "PyPI" if base == "uvx" else None
+    for runner, sub, kind in _RUNNERS:
+        if base == runner and words[:len(sub)] == sub:
+            eco, words = kind, words[len(sub):]
+    if eco is None:
+        return [], f"local command ({shown})" if shown else "local command"
+    flags, main, extra, first, k = _RUNNER_PACKAGE_FLAGS[eco], [], [], None, 0
+    while k < len(words):
+        flag, eq, value = words[k].partition("=")
+        if words[k] == "--":
+            first = words[k + 1] if k + 1 < len(words) else None
+            break
+        if flag in flags:
+            if not eq:
+                k += 1
+                value = words[k] if k < len(words) else ""
+            (main if flags[flag] == "main" else extra).extend(v for v in value.split(",") if v)
+        elif flag.startswith("-"):
+            if not eq and flag in _RUNNER_VALUE_FLAGS[eco]:
+                k += 1
+        else:
+            first = words[k]
+            break
+        k += 1
+    specs = (main or ([first] if first else [])) + extra
+    if not specs:
+        return [], f"{base} with no package named"
+    pkgs = [_read_spec(eco, spec) for spec in specs]
+    return [p for p in pkgs if p], (f"{base} from a source that is not a public package index" if None in pkgs else None)
+
+
+def agent_servers(path):
+    """Every MCP server one agent config declares: [{name, command, args, url}]. A JSON config keeps them in an
+    `mcpServers` map, and Claude Code's ~/.claude.json has one more per project. Codex keeps an `mcp_servers`
+    table in TOML. Nothing else of an entry is read: not its env, not its headers."""
+    path = Path(path)
+    data = _toml(path) if path.suffix == ".toml" else json.loads(path.read_text(encoding="utf-8", errors="ignore"))
+    if not isinstance(data, dict):
+        raise ValueError("the file is not a config object")
+    projects = data.get("projects")
+    maps = [data.get("mcpServers"), data.get("mcp_servers")]
+    maps += [x.get("mcpServers") for x in projects.values() if isinstance(x, dict)] if isinstance(projects, dict) else []
+    out = []
+    for servers in maps:
+        for name, entry in servers.items() if isinstance(servers, dict) else ():
+            entry = entry if isinstance(entry, dict) else {}
+            command, args, url = entry.get("command"), entry.get("args"), entry.get("url")
+            out.append({"name": str(name), "command": command if isinstance(command, str) and command else None,
+                        "args": args if isinstance(args, list) else [], "url": url if isinstance(url, str) else None})
+    return out
+
+
+def registry_newest(ecosystem, name, tag="latest"):
+    """The version a public package index hands out today (npm: for a dist-tag). None when the index does not have
+    it. Any other failure raises: an index that could not be asked is not a clean answer."""
+    url = (f"https://registry.npmjs.org/{urllib.parse.quote(name, safe='@/')}/{urllib.parse.quote(tag, safe='')}"
+           if ecosystem == "npm" else f"https://pypi.org/pypi/{urllib.parse.quote(name, safe='')}/json")
+    try:
+        data = http_json(url)
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            return None
+        raise
+    data = data if isinstance(data, dict) else {}
+    version = data.get("version") if ecosystem == "npm" else (data.get("info") or {}).get("version")
+    if not isinstance(version, str) or not version:
+        raise ValueError(f"no version in the answer for {name}")
+    return version
+
+
+def mcp_scan(proj, file, cache_days=7):
+    """One agent config. The package each server launch fetches is checked at OSV: a pinned launch at its version,
+    an unpinned one at the newest release only, which makes the manifest partial. Remote servers and local commands
+    are listed and not checked. Only the launched package is checked, not what it installs underneath."""
+    try:
+        declared = agent_servers(Path(proj) / file)
+    except RuntimeError as e:   # no TOML reader on this Python
+        return outcome("unscanned", str(e))
+    except Exception as e:
+        return outcome("failed", f"could not read {file}: {e}")
+    servers, newest, unchecked, users = [], [], [], {}
+    for s in declared:
+        row = {"name": s["name"]}
+        servers.append(row)
+        if not s["command"]:
+            try:
+                host = urllib.parse.urlsplit(s["url"] or "").hostname
+            except ValueError:
+                host = None
+            row.update({"kind": "remote", "host": host} if host else {"kind": "other", "note": "no command or URL to read"})
+            continue
+        pkgs, note = launch_packages(s["command"], s["args"])
+        row.update({"kind": "package", "packages": pkgs} if pkgs else {"kind": "other"})
+        if note:
+            row["note"] = note
+        for p in pkgs:
+            p["pinned"] = p["version"] is not None
+            if not p["pinned"]:
+                tag = p["loose"] or "latest"
+                if re.match(r"^[A-Za-z][\w.-]*$", tag) if p["ecosystem"] == "npm" else tag == "latest":
+                    try:
+                        p["version"] = registry_newest(p["ecosystem"], p["name"], tag)
+                    except Exception as e:
+                        return outcome("failed", f"package index unreachable for {p['name']}: {e}")
+                    why = "not on the public index"
+                else:
+                    why = f"{p['loose']} is a range"
+                if p["version"]:
+                    newest.append(f"{s['name']} ({p['name']} {p['version']})")
+                else:
+                    unchecked.append(f"{s['name']} ({p['name']}: {why})")
+            if p["version"]:
+                users.setdefault((p["ecosystem"], p["name"], p["version"]), []).append(s["name"])
+    asked = [{"ecosystem": e, "name": n, "version": v} for e, n, v in sorted(users)]
+    try:
+        groups, missing = osv_advisories(asked, cache_days) if asked else ([], 0)
+    except OsvFailed as e:
+        return outcome("failed", str(e))
+    findings = [new_finding(g["id"], q["name"], q["ecosystem"], file, g["severity"], AGENT_SCOPE, False, [q["version"]], "",
+                            _osv_fix(g["records"], q["name"], q["ecosystem"], q["version"]), g["title"], g["url"],
+                            aliases=g["aliases"], score=g["score"], source=g["severity_source"],
+                            via=[f"MCP server {name}" for name in users[(q["ecosystem"], q["name"], q["version"])]])
+                for q, gs in zip(asked, groups) for g in gs]
+    notes = []
+    if newest or unchecked:
+        notes.append(_n(len(newest) + len(unchecked), "unpinned package"))
+        if newest:
+            notes.append("checked at the newest release only: " + ", ".join(newest))
+        if unchecked:
+            notes.append("not checked: " + ", ".join(unchecked))
+        notes.append("pin a version to make the check hold")
+    if missing:
+        notes.append(f"details unavailable for {missing} advisories, shown as unknown severity")
+    return outcome("partial" if newest or unchecked else "scanned", "; ".join(notes) or None, findings, len(asked), servers)
+
+
+def agent_project(entries, problems=None):
+    """The agent configs named in the config, as one project. They sit outside the roots (in the home folder,
+    mostly), so they are listed, never discovered. An entry may be a glob. One that matches no file is a problem:
+    a config that moved would otherwise just stop being checked."""
+    home, files = str(Path.home()), []
+    for entry in entries:
+        hits = sorted(f for f in glob.glob(os.path.expanduser(entry)) if os.path.isfile(f))
+        if not hits and problems is not None:
+            problems.append(f"agent_configs entry '{entry}' matches no file (moved, or is that tool not on this machine?)")
+            log(f"config: {problems[-1]}")
+        files += [f for f in hits if f not in files]
+    if not files:
+        return None
+    return {"path": home, "name": AGENT_PROJECT,
+            "manifests": [_manifest(os.path.relpath(f, home) if f.startswith(home + os.sep) else f, "mcp") for f in files]}
+
+
 # ------------------------------------------------------------------ config
 CONFIG_KEYS = {"roots", "include", "exclude", "exposed", "max_depth", "notify", "out", "urgency", "ignore",
-               "osv_cache_days", "deployed", "_notes"}
+               "osv_cache_days", "deployed", "agent_configs", "_notes"}
 # unknown_on_exposed is off by default: Rust and Go advisories are often published with no rating at all,
 # so turning it on means a live Rust or Go app always needs action. Unrated advisories are always listed.
+# high_on_agent_tools is on by default: an MCP server runs on this machine with the agent's credentials, and takes
+# its instructions from a model that reads untrusted text.
 DEFAULT_URGENCY = {"critical_always": True, "high_on_exposed": True, "moderate_on_exposed": False,
-                   "unknown_on_exposed": False}
+                   "unknown_on_exposed": False, "high_on_agent_tools": True}
 
 
 def today():
@@ -827,7 +1052,7 @@ def _n(count, word):
 def load_config(path, roots_override):
     """(config, problems, warnings). A problem means the scan cannot be trusted as complete; a warning is a nudge."""
     cfg = {"roots": [], "include": [], "exclude": [], "exposed": [], "max_depth": 3, "ignore": [], "deployed": {},
-           "urgency": dict(DEFAULT_URGENCY), "osv_cache_days": 7}
+           "agent_configs": [], "urgency": dict(DEFAULT_URGENCY), "osv_cache_days": 7}
     problems, warnings = [], []
     if path:
         try:
@@ -853,6 +1078,9 @@ def load_config(path, roots_override):
         problems.append(f"roots not found: {', '.join(missing)}")
     if cfg.get("notify") and not isinstance(cfg["notify"], str):
         problems.append("notify must be a shell command string")
+    if not isinstance(cfg["agent_configs"], list) or not all(isinstance(x, str) for x in cfg["agent_configs"]):
+        problems.append("agent_configs must be a list of file paths")
+        cfg["agent_configs"] = []
     good = []
     for ig in cfg["ignore"] or []:
         if isinstance(ig, dict) and ig.get("reason") and (ig.get("advisory") or ig.get("package") or ig.get("match")):
@@ -921,10 +1149,13 @@ def scan_folder(path, manifests, cfg):
             eco = m["ecosystem"]
             r = (npm_scan(path, m["file"]) if eco == "npm" else pnpm_scan(path, m["file"]) if eco == "pnpm"
                  else python_scan(path, m["file"], cfg.get("osv_cache_days", 7)) if eco == "python"
+                 else mcp_scan(path, m["file"], cfg.get("osv_cache_days", 7)) if eco == "mcp"
                  else osv_scanner_scan(path, m["file"]))
         except Exception as e:   # a bug in a scanner must not read as a clean manifest
             r = outcome("failed", f"scanner error: {type(e).__name__}: {e}")
         m.update(status=r["status"], detail=r["detail"], packages=r["packages"], seconds=round(time.time() - t0, 1))
+        if "servers" in r:
+            m["servers"] = r["servers"]
         findings += r["findings"]
     return merge_findings(findings)
 
@@ -939,18 +1170,19 @@ def scan(cfg, dry_run=False, exposed_only=False, all_exposed=False, problems=Non
             if not any(is_exposed(p["path"], p["name"], [pattern]) for p in projects):
                 problems.append(f"{key} entry '{pattern}' matches no project under the roots (moved, renamed or misspelt?)")
                 log(f"config: {problems[-1]}")
+    agent = agent_project(cfg.get("agent_configs") or [], problems)   # not a folder of code: never live, no git
     out = []
-    for p in projects:
-        p["exposed"] = all_exposed or is_exposed(p["path"], p["name"], cfg.get("exposed", []))
+    for p in projects + ([agent] if agent else []):
+        p["exposed"] = p is not agent and (all_exposed or is_exposed(p["path"], p["name"], cfg.get("exposed", [])))
         if exposed_only and not p["exposed"]:
             continue
-        p.update(git=git_info(p["path"]), findings=[], deployed=None)
+        p.update(git={} if p is agent else git_info(p["path"]), findings=[], deployed=None)
         files = ", ".join(m["file"] for m in p["manifests"] if m["status"] == "pending")
         if dry_run:
             log(f"  would scan {p['name']}{' (live)' if p['exposed'] else ''}: {files}")
         else:
             p["findings"] = scan_folder(p["path"], p["manifests"], cfg)
-            spec = deployed_spec(p, cfg.get("deployed"))
+            spec = None if p is agent else deployed_spec(p, cfg.get("deployed"))
             if spec is not None:
                 p["deployed"] = check_deployed(p, spec, cfg)
             bad = "; ".join(f"{m['file']} {m['status']}: {(m['detail'] or '')[:80]}" for m in p["manifests"]
@@ -1115,7 +1347,8 @@ def urgent_findings(p, rules):
         if (s == "critical" and rules.get("critical_always", True)) or (p["exposed"] and (
                 (s in ("critical", "high") and rules.get("high_on_exposed", True))
                 or (s in ("critical", "high", "moderate") and rules.get("moderate_on_exposed", False))
-                or (s == "unknown" and rules.get("unknown_on_exposed", False)))):
+                or (s == "unknown" and rules.get("unknown_on_exposed", False)))) or (
+                f["scope"] == AGENT_SCOPE and s in ("critical", "high") and rules.get("high_on_agent_tools", True)):
             out.append(f)
     return out
 
@@ -1282,14 +1515,35 @@ def _package_blocks(findings, many_manifests):
     return lines
 
 
+def _server_lines(servers):
+    """Report lines for the MCP servers of one agent config: each launch, then the remote servers on one line."""
+    lines = []
+    for s in servers:
+        for p in s.get("packages") or []:
+            if p["pinned"]:
+                how = f" {p['version']}, pinned and checked"
+            else:
+                how = f", unpinned{' (' + p['loose'] + ')' if p['loose'] else ''}: " + (
+                    f"newest release {p['version']} checked" if p["version"] else "not checked")
+            lines.append(f"  - {s['name']}: {p['ecosystem']} {p['name']}{how}")
+        if s.get("note"):
+            lines.append(f"  - {s['name']}: {s['note']}, not checked")
+    remote = [f"{s['name']} ({s['host']})" for s in servers if s["kind"] == "remote"]
+    if remote:
+        lines.append("  - remote, not checked: " + ", ".join(remote))
+    return lines or ["  - no MCP servers declared"]
+
+
 def render(report, rules, diff=None, tools=None, legacy_previous=None):
     projects = report["projects"]
     pairs = [(p, m) for p in projects for m in p["manifests"]]
     urg = [p for p in projects if urgent_findings(p, rules)]
     failed = [(p, m) for p, m in pairs if m["status"] == "failed"]
     loose = [(p, m) for p, m in pairs if m["status"] in ("unscanned", "partial")]
+    agent = [(p, m) for p, m in pairs if m["ecosystem"] == "mcp"]
     head = (f"{_n(len(projects), 'project')}, {_n(len(pairs), 'manifest')}. **{len(urg)} need{'s' if len(urg) == 1 else ''} "
-            "action** (a critical anywhere, or a critical or high in a live app).")
+            "action** (a critical anywhere, or a critical or high in a live app"
+            + (" or an agent tool" if agent and rules.get("high_on_agent_tools", True) else "") + ").")
     if failed:
         head += f" **{_n(len(failed), 'manifest')} could not be scanned**, so this report is incomplete."
     if loose:
@@ -1383,6 +1637,12 @@ def render(report, rules, diff=None, tools=None, legacy_previous=None):
             lines.append("- plus " + ", ".join(f"{rest[s]} {s}" for s in ("moderate", "low", "info") if s in rest)
                          + " (in report.json)")
         lines += [f"- [{f['id']}]({f['url']}) {f['package']} ignored: {f['ignored']['reason']}" for f in ignored]
+    if agent:
+        lines += ["", "## Agent tools", "", "MCP servers in the agent configs. The package a server launches is checked, "
+                  "not what that package installs underneath.", ""]
+        for p, m in agent:
+            lines.append(f"- {p['name']} `{m['file']}`" + ("" if "servers" in m else f": {m['status']}"))
+            lines += _server_lines(m["servers"]) if "servers" in m else []
     if loose:
         lines += ["", "## Not scanned", "", "Nothing here was checked, or only part of it was.", ""]
         lines += [f"- {p['name']}: {m['file']}: {m['detail']}" for p, m in loose]
@@ -1498,6 +1758,7 @@ def main(argv=None):
     cfg, problems, warnings = load_config(a.config, [a.repo] if a.repo else a.roots)
     if a.repo:
         cfg["max_depth"] = None
+        cfg["agent_configs"] = []   # one repository, perhaps in CI: this machine's agent configs are not part of it
     if a.max_depth is not None:
         cfg["max_depth"] = a.max_depth
     for note in problems + warnings:
@@ -1543,6 +1804,9 @@ def main(argv=None):
                  "OSV API": f"api.osv.dev (cached {cfg.get('osv_cache_days', 7)} days in {CACHE_DIR})",
                  "commands": "npm audit --json (scope from the lockfile); pnpm audit --json; OSV querybatch; "
                              "osv-scanner scan source -L <lockfile>"}
+        if any(m["ecosystem"] == "mcp" for p in projects for m in p["manifests"]):
+            tools["agent configs"] = ("OSV querybatch for the package each MCP server launches; registry.npmjs.org and "
+                                      "pypi.org for the newest release of an unpinned one")
         diff = diff_reports(report, prev)
         md = render(report, rules, diff, tools, legacy_previous=prev_name if prev is not None and diff is None else None)
         (out / "report.md").write_text(md)

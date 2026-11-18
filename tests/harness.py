@@ -1,5 +1,5 @@
 """Shared end-to-end harness: real discovery, real git, real report writing; npm audit and OSV are recorded."""
-import contextlib, io, json, os, shutil, subprocess, sys, tempfile, unittest
+import contextlib, io, json, os, shutil, subprocess, sys, tempfile, unittest, urllib.error
 from pathlib import Path
 from unittest import mock
 
@@ -16,14 +16,16 @@ NEEDS_TOML = unittest.skipIf(scan.tomllib is None, "needs Python 3.11+ or tomli"
 
 
 class Harness(unittest.TestCase):
-    """A temp machine: code/ with projects, a config, and recorded answers for npm audit and OSV.
-    The recorded OSV says exactly one thing is vulnerable: requests 2.31.0 (advisory HIGH)."""
+    """A temp machine: code/ with projects, a config, and recorded answers for npm audit, OSV and the package indexes.
+    The recorded OSV says exactly one thing is vulnerable: requests 2.31.0 (advisory HIGH). A test can add to
+    `vulnerable`, and name in `newest` the release a package index hands out today."""
 
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
         self.code = self.tmp / "code"
         self.audit, self.osv_down = (FIX / "npm/audit.json").read_text(), False
+        self.vulnerable, self.newest = {("requests", "2.31.0")}, {}
         real_run = scan.run
 
         def fake_run(cmd, cwd, timeout=300):
@@ -37,8 +39,13 @@ class Harness(unittest.TestCase):
             if self.osv_down:
                 raise OSError("network down")
             if payload is not None:
-                return {"results": [{"vulns": [{"id": HIGH["id"]}]} if (q["package"]["name"], q["version"]) ==
-                                    ("requests", "2.31.0") else {} for q in payload["queries"]]}
+                return {"results": [{"vulns": [{"id": HIGH["id"]}]} if (q["package"]["name"], q["version"]) in
+                                    self.vulnerable else {} for q in payload["queries"]]}
+            if not url.startswith(scan.OSV_API):   # a package index, asked for the newest release
+                for pkg, ver in self.newest.items():
+                    if f"/{pkg}/" in url:
+                        return {"version": ver, "info": {"version": ver}}
+                raise urllib.error.HTTPError(url, 404, "Not Found", None, None)
             return HIGH
         for target, fake in (("run", fake_run), ("http_json", fake_http)):
             p = mock.patch.object(scan, target, side_effect=fake)

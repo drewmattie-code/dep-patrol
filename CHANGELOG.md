@@ -1,5 +1,27 @@
 # Changelog
 
+## 3.1.0 (2026-11-17)
+
+The coding agent's own tools are now part of the patrol.
+
+### New
+
+- **Agent configs.** A new `agent_configs` list names the files that declare MCP servers (Claude Code's `~/.claude.json`, plugin `.mcp.json` files, Codex's `config.toml`, or any JSON file with an `mcpServers` map). The package each server is launched from is checked at OSV. These servers start straight from a registry (`npx -y some-server@latest`), so no lockfile exists for the folder scan to find.
+  - A pinned launch is checked at its version.
+  - An unpinned launch is checked at the newest release, looked up at the npm registry or PyPI, and its manifest is `partial`. A range, or a package the public index does not have, is named as not checked.
+  - Remote servers are listed by host and local commands by name. Neither is checked.
+  - They are reported as one project, `agent-tools`, and the report has an **Agent tools** section listing every server and how far it was checked.
+- **`urgency.high_on_agent_tools`** (on by default): a critical or high advisory in an agent tool needs action. Findings there have the scope `agent-tool`.
+- An `agent_configs` entry that matches no file is a scan problem (exit code 2), like an `exposed` entry that matches no project.
+
+### Good to know
+
+- Nothing changes until `agent_configs` is set. `--repo` and the GitHub Action ignore it.
+- Only the launched package is checked, not what it installs underneath.
+- Only the command, its arguments and the host of a URL are read from a server entry. Env values, headers and arguments never reach the report.
+- With `agent_configs` set, the scan also talks to registry.npmjs.org and pypi.org, to ask for the newest release of an unpinned package. Only the package name is sent.
+- To cover the lockfiles that Claude Code plugins and skills ship with, add `~/.claude/plugins/cache` and `~/.claude/skills` to `roots`. That needs no new version.
+
 ## 3.0.1 (2026-11-17)
 
 - **A checkout that is behind the live commit no longer adds its own findings.** With a `deployed` entry, a stale branch of an app that has moved on kept the app on the "needs action" list for holes production had already closed. Now only what is live counts in that case, and the report says the checkout is behind. A checkout that is ahead of live, or on another line, still counts both.

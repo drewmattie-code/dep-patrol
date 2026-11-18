@@ -23,11 +23,16 @@
       "command": "curl -fsS https://api.example.com/healthz | python3 -c 'import json,sys; print(json.load(sys.stdin)[\"version\"])'"
     }
   },
+  "agent_configs": [
+    "~/.claude.json",
+    "~/.claude/plugins/cache/*/*/*/.mcp.json"
+  ],
   "urgency": {
     "critical_always": true,
     "high_on_exposed": true,
     "moderate_on_exposed": false,
-    "unknown_on_exposed": false
+    "unknown_on_exposed": false,
+    "high_on_agent_tools": true
   },
   "ignore": [
     {

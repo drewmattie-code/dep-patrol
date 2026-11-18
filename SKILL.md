@@ -1,6 +1,6 @@
 ---
 name: dep-patrol
-description: Monthly (or on-demand) dependency vulnerability patrol across every repo on a machine, then a safe patch-and-deploy loop for what matters. Finds every lockfile under your code folders, audits each one (npm, pnpm, Python, and Yarn/Bun/Cargo/Go through osv-scanner), tracks every advisory on its own, ranks by what is live on the internet, can check the commit that is actually deployed, and walks the fix (branch from what is deployed, bump, prove the advisory is gone, full test gate, deploy, verify on production). Use it whenever someone asks to scan repos for vulnerable dependencies, check whether a CVE or security post affects "our apps", audit packages, update vulnerable libraries, run the monthly security scan, add a dependency check to CI, or confirm that a security fix is really live, and when a news item names a package version (Next.js, React, lodash, axios, a Python library) that might be in use. Also use it before shipping an AI-built app: "it works" is not the definition of done.
+description: Monthly (or on-demand) dependency vulnerability patrol across every repo on a machine, then a safe patch-and-deploy loop for what matters. Finds every lockfile under your code folders, audits each one (npm, pnpm, Python, and Yarn/Bun/Cargo/Go through osv-scanner), tracks every advisory on its own, ranks by what is live on the internet, can check the live commit and your agent's MCP servers, and walks the fix (branch from what is deployed, bump, prove the advisory is gone, full test gate, deploy, verify on production). Use it whenever someone asks to scan repos for vulnerable dependencies, check whether a CVE or security post affects "our apps", audit packages, update vulnerable libraries, run the monthly security scan, add a dependency check to CI, or confirm that a security fix is really live, and when a news item names a package version (Next.js, React, lodash, axios, a Python library) that might be in use. Also use it before shipping an AI-built app: "it works" is not the definition of done.
 ---
 
 # dep-patrol
@@ -56,6 +56,7 @@ A folder with both a JS lockfile and Python manifests is one project with severa
   - Git and local-path packages are skipped and named, because they are not PyPI packages.
   - A `requirements/` folder (`base.txt`, `dev.txt`, `prod.txt`) belongs to the project above it. A file pulled in with `-r` is read as part of the file that includes it, unless it is scanned on its own.
 - **Yarn, Bun, Cargo, Go** (`yarn.lock`, `bun.lock`, `Cargo.lock`, `go.mod`): `osv-scanner` when it is on PATH (`brew install osv-scanner`). Without it they are `unscanned`, with the command to run.
+- **Agent configs** (only the files named under `agent_configs`): the OSV.dev API, for the package each MCP server is launched from. See "Agent tools" below.
 - **Not looked at:** Maven, Gradle, Composer, Bundler, NuGet, `Pipfile.lock`, conda. Run `osv-scanner scan source -r .` yourself for those. This is a hard boundary, so a clean report says nothing about them.
 
 ### What a finding is
@@ -71,10 +72,11 @@ One finding is **one advisory against one package in one manifest**. A package w
   - `poetry.lock`: its `groups` field, or the graph from `pyproject.toml`.
   - requirements files: the file name (`requirements-dev.txt` is dev, `requirements.txt` is production).
 - `scope not known` when it cannot (Cargo, Go, Yarn, Bun, an old npm lockfile, a requirements file with an unusual name). **It counts as production.**
+- `agent-tool` for a package an MCP server is launched from. It runs on this machine, not in an app, and has its own urgency rule.
 
 **Severity** comes from the advisory database's own label when there is one, else from a CVSS 3 vector. An advisory nobody has rated is `unknown` and is listed as **Unrated**. Rust and Go advisories are often unrated, so by default they are shown but do not raise the alarm (`urgency.unknown_on_exposed` turns that on). Rust "unmaintained" notices are `info`.
 
-"Needs action" means a **critical** anywhere in production scope, or a **critical or high** in an app marked live. Dev-only findings are counted in the table and never urgent.
+"Needs action" means a **critical** anywhere in production scope, or a **critical or high** in an app marked live or in an agent tool. Dev-only findings are counted in the table and never urgent.
 
 ### Config (`~/.dep-patrol/config.json`)
 
@@ -88,7 +90,8 @@ One finding is **one advisory against one package in one manifest**. A package w
     "my-saas-app": {"ref": "origin/production"},
     "marketing-site/web": {"command": "curl -fsS https://example.com/healthz | python3 -c 'import json,sys; print(json.load(sys.stdin)[\"version\"])'"}
   },
-  "urgency": {"critical_always": true, "high_on_exposed": true, "moderate_on_exposed": false, "unknown_on_exposed": false},
+  "agent_configs": ["~/.claude.json", "~/.claude/plugins/cache/*/*/*/.mcp.json"],
+  "urgency": {"critical_always": true, "high_on_exposed": true, "moderate_on_exposed": false, "unknown_on_exposed": false, "high_on_agent_tools": true},
   "ignore": [{"advisory": "GHSA-xxxx-xxxx-xxxx", "project": "my-saas-app", "reason": "build-time only, not shipped"}],
   "notify": "osascript -e 'display notification \"$DEP_PATROL_SUMMARY\" with title \"dep-patrol\"'"
 }
@@ -97,7 +100,8 @@ One finding is **one advisory against one package in one manifest**. A package w
 - **`exposed`** lists what runs a server on the internet. A plain word must equal the folder name. `repo/sub` matches a path suffix, and `*-prod` is a glob.
   - Static exports don't count: no server means no server-side holes.
 - **`deployed`** says how to learn which commit is live (see the next section). Keys match like `exposed`.
-- An `exposed` or `deployed` entry that matches no project is a scan problem (exit code 2). A live app whose folder moved would otherwise just stop being treated as live.
+- **`agent_configs`** names the agent config files to read for MCP servers (see "Agent tools"). An entry can be a glob.
+- An `exposed` or `deployed` entry that matches no project is a scan problem (exit code 2). A live app whose folder moved would otherwise just stop being treated as live. The same goes for an `agent_configs` entry that matches no file.
 - **`ignore`** rules need a `reason` and a target: `advisory` (an id, alias or advisory URL), `package`, or both.
   - Matching is exact. `"GHSA-xxxx"` does not match a longer id, and `"next"` does not match `next-auth`.
   - A `package` rule with no `advisory` hides every advisory for that package, including future ones. Prefer `advisory`.
@@ -121,6 +125,36 @@ When the live commit is this checkout, the report says so. When it differs, the 
 If nothing in production can report its commit, keep a git tag on the live commit and move it in your deploy step (`git tag -f live <commit>`), then use `{"ref": "live"}`.
 
 If the live commit cannot be found (the command failed, or the commit is not in this checkout), that is an incomplete scan: exit code 2. Run `git fetch` and scan again.
+
+### Agent tools
+
+An MCP server is a program the coding agent starts on this machine, with the agent's credentials. Most are launched straight from a registry (`npx -y some-server@latest`), so there is no lockfile for the folder scan to find. `agent_configs` names the files that declare them:
+
+| Client | File |
+|---|---|
+| Claude Code | `~/.claude.json` (your own servers, and one list per project) |
+| Claude Code plugins | `~/.claude/plugins/cache/*/*/*/.mcp.json` |
+| Codex | `~/.codex/config.toml` |
+| Anything else | any JSON file with an `mcpServers` map |
+
+They are scanned as one project, `agent-tools`, with one manifest per file. For each server:
+
+- **Pinned launch** (`npx some-server@1.4.2`, `uvx some-server==1.4.2`, `uvx --from some-server==1.4.2 cmd`): checked at that version.
+- **Unpinned launch** (`@latest`, another tag, or no version): the newest release is looked up at the npm registry or PyPI and checked. The manifest is `partial`, because the next start can fetch a different release. A range (`@^1.2.0`) or a package the public index does not have is named as not checked.
+- **Remote server** (a URL): listed by host. Its code is not on this machine, so there is nothing to check.
+- **Local command** (`node server.js`, `docker run`, a plugin's own script): listed, not checked. If it lives in a folder with a lockfile, add that folder to `roots`. For Claude Code plugins and skills that means `~/.claude/plugins/cache` and `~/.claude/skills`.
+
+The report's **Agent tools** section lists every server with what was read from its launch line. Read it once after adding a config: it is how you see that the right package was picked out.
+
+Limits to keep in mind:
+
+- Only the launched package is checked, not what it installs underneath.
+- This is a version check. It says nothing about what a server does or whether its tool descriptions are honest.
+- Recognised runners are `npx`, `npm exec`, `pnpm dlx`, `yarn dlx`, `bunx`, `bun x`, `uvx`, `uv tool run` and `pipx run`. Anything wrapped in `sh -c`, `env` or `cmd /c` is listed as a local command.
+- Only the command, its arguments and the host of a URL are read. Env values and headers are never read, and arguments are never written to the report.
+- `--repo` and the GitHub Action ignore `agent_configs`: a repository run is about that repository.
+
+A critical or high advisory in an agent tool needs action by default. `urgency.high_on_agent_tools: false` leaves only criticals.
 
 ### Reading the change list
 
@@ -192,6 +226,8 @@ For each urgent app, prefer the helper scripts over improvised shell. They refus
 7. **Scan again.** With a `deployed` entry, the next scan confirms the advisory is gone from what is live.
 
 Do internal tools after the live apps, and always give a heads-up before restarting something people are using.
+
+**An agent-tool finding is fixed in the config, not with a deploy.** Pin the launch to the fixed version in the config file the report names, start a new agent session so the server restarts, and scan again. Pinning is also the fix for an unpinned launch that is only `partial`.
 
 ## 4. Gotchas that cost real time
 

@@ -1,0 +1,12 @@
+model = "gpt-5"
+
+[mcp_servers.repl]
+command = "/Applications/Example.app/Contents/Resources/bin/node_repl"
+args = []
+
+[mcp_servers.fetch]
+command = "uvx"
+args = ["mcp-server-fetch==2025.1.17"]
+
+[projects."/home/dev/code/site"]
+trust_level = "trusted"

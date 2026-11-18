@@ -17,6 +17,7 @@ It is built around one rule: **a scan that did not run is never reported as clea
 - **Tracks each advisory on its own.** A package with twelve advisories is twelve findings. Copies of one advisory across databases (GHSA, PYSEC, RUSTSEC) are folded together.
 - **Says whether it ships.** Production and dev are told apart from the lockfile itself, per installed copy. When a format cannot say, the finding is marked "scope not known" and counted as production.
 - **Ranks** live apps first, then by worst severity. You set what counts as urgent, and you can ignore a single advisory if you give a reason.
+- **Checks your agent's own tools.** Name your agent config files and it checks the package each MCP server is launched from, and lists every launch that is not pinned to a version.
 - **Checks what is live.** Tell it how to find the deployed commit and it scans that commit too. "The fix is merged, but production still runs the affected version" becomes a line in the report.
 - **Remembers.** Each report opens with what is new, fixed or still open since the last run. "Fixed" needs a successful rescan. A manifest that failed this time keeps its last known findings.
 - **Reports** in Markdown, JSON and SARIF, and alerts through any shell command you configure (desktop notification, Slack webhook, Telegram bot), both when something needs action and when the scan itself broke.
@@ -31,7 +32,7 @@ It is built around one rule: **a scan that did not run is never reported as clea
 
 ```bash
 git clone https://github.com/drewmattie-code/dep-patrol ~/.claude/skills/dep-patrol
-cd ~/.claude/skills/dep-patrol                        # to pin a release: git checkout v3.0.0
+cd ~/.claude/skills/dep-patrol                        # to pin a release: git checkout v3.1.0
 python3 scripts/scan.py --roots ~/code --dry-run     # lists what it found, no network
 python3 scripts/scan.py --roots ~/code               # the real thing
 ```
@@ -121,6 +122,31 @@ The job fails when something needs action (exit code 1) and when the scan is inc
 
 With an entry like this, the scan finds the commit that is live. If it is not the commit you have checked out, the lockfiles from the live commit are read out of git and scanned as well. A vulnerability that is fixed in your checkout but still deployed keeps the app on the "needs action" list until the fix ships.
 
+## Your agent's own tools
+
+An MCP server is a program your coding agent starts on your machine, with your credentials. Most are launched straight from a registry by a line like `npx -y some-server@latest`. No lockfile lands on disk, so a scan of your code folders never sees them.
+
+```json
+"agent_configs": ["~/.claude.json", "~/.claude/plugins/cache/*/*/*/.mcp.json"]
+```
+
+Each file named here is read for its MCP servers: the `mcpServers` map of a JSON config, or the `mcp_servers` table of a Codex `config.toml`. An entry can be a glob.
+
+- A launch pinned to a version (`npx some-server@1.4.2`, `uvx some-server==1.4.2`) is checked at that version.
+- An unpinned launch (`@latest`, or no version at all) is checked at the newest release, and the config is marked partial. It can pick up a new release the next time it starts, so the answer only holds for today. Pin it.
+- Remote servers and local commands are listed, and not checked.
+
+The report gets an **Agent tools** section that lists every server and how far it was checked:
+
+```markdown
+- agent-tools `.claude.json`
+  - github: npm @modelcontextprotocol/server-github 2025.4.8, pinned and checked
+  - browser: npm @playwright/mcp, unpinned (latest): newest release 0.0.85 checked
+  - remote, not checked: search (mcp.example.com)
+```
+
+A critical or high advisory in an agent tool counts as needing action (`urgency.high_on_agent_tools`). From each server entry only the command, its arguments and the host of a URL are read. Env values, headers and arguments never reach the report.
+
 ## Exit codes
 
 | Code | Meaning |
@@ -134,12 +160,13 @@ With an entry like this, the scan finds the commit that is live. If it is not th
 - Python 3.9+. Reading `poetry.lock` and `uv.lock` needs 3.11+ (or `pip install tomli`). On an older Python those lockfiles are reported as not scanned.
 - npm for JavaScript projects. pnpm and `osv-scanner` are optional and widen the coverage.
 - git, for the live commit check.
-- Network access to the npm registry and api.osv.dev. Only package names and versions are sent, no source code.
+- Network access to the npm registry and api.osv.dev, and to pypi.org when `agent_configs` is set. Only package names and versions are sent, no source code.
 
 ## What it does not cover
 
 - Maven, Gradle, Composer, Bundler, NuGet, `Pipfile.lock` and conda are not looked at. Run `osv-scanner` yourself for those.
 - Requirements that are not pinned to an exact version cannot be audited. They are named in the report.
+- For an MCP server, only the package it is launched from is checked, not what that package installs underneath. Nothing here judges what a server does or whether its tool descriptions can be trusted.
 - A dependency scanner tells you a known-bad version is present. It doesn't find bugs in your own code, misconfigurations or leaked secrets. Pair it with a code review, and keep secrets out of files your app can serve.
 
 ## Tests
@@ -150,6 +177,6 @@ python3 -m unittest discover -s tests
 
 The unit tests run offline: real-format lockfiles, recorded tool output, a mocked OSV API, real git repositories and stand-in CLIs for the shell helpers. CI also runs the Action against freshly built test repositories with known advisories, and checks its production list against npm's own `npm audit --omit=dev`.
 
-See [CHANGELOG.md](CHANGELOG.md) for what changed in v3 and how to upgrade from v2.
+See [CHANGELOG.md](CHANGELOG.md) for what changed in each release and how to upgrade from v2.
 
 MIT licensed. Thanks to the reviewers whose lists of gaps shaped v2 and v3.
